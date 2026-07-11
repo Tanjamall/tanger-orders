@@ -50,7 +50,7 @@ function OrderApp({ session }: { session: Session | null }) {
   const [notice, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(null)
-  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string }[]>([])
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>([])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
 
   useEffect(() => { localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders])
@@ -162,6 +162,13 @@ function OrderApp({ session }: { session: Session | null }) {
     await loadCloud(); setShowAccountMenu(false)
   }
 
+  async function deleteWorkspace() {
+    if (!supabase || !workspaceId || !window.confirm('Delete this workspace and all of its orders, inventory, and profit history? This cannot be undone.')) return
+    const { error } = await supabase.rpc('delete_workspace', { target_workspace_id: workspaceId })
+    if (error) { setNotice(error.message); return }
+    setShowAccountMenu(false); await loadCloud()
+  }
+
   async function planRoute() {
     const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status))
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
@@ -188,10 +195,11 @@ function OrderApp({ session }: { session: Session | null }) {
       <p>Shared workspace</p>
       <strong>{workspaceCode ?? 'Loading code…'}</strong>
       <p className="workspace-label">Your workspaces</p>
-      <div className="workspace-list">{workspaces.map((workspace) => <button key={workspace.id} className={workspace.id === workspaceId ? 'current-workspace' : ''} onClick={() => void switchWorkspace(workspace.id)}>{workspace.name}{workspace.id === workspaceId && ' · Current'}</button>)}</div>
-      <div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>+ Create workspace</button><button onClick={() => void manageWorkspace('join')}>+ Join workspace</button></div>
-      <button onClick={() => void loadCloud()}>Refresh shared orders</button>
-      <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>Sign out</button>
+      <div className="workspace-list">{workspaces.map((workspace) => <button key={workspace.id} className={workspace.id === workspaceId ? 'current-workspace' : ''} onClick={() => void switchWorkspace(workspace.id)}>⌂ {workspace.name}{workspace.id === workspaceId && ' · Current'}</button>)}</div>
+      <div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>＋ Create</button><button onClick={() => void manageWorkspace('join')}>↗ Join</button></div>
+      <button onClick={() => void loadCloud()}>↻ Refresh shared orders</button>
+      {workspaces.find((workspace) => workspace.id === workspaceId)?.is_owner && <button className="delete-workspace" onClick={() => void deleteWorkspace()}>⌫ Delete this workspace</button>}
+      <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>↪ Sign out</button>
     </section>}
 
     {supabase && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
