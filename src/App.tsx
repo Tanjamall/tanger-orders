@@ -38,6 +38,10 @@ function OrderApp({ session }: { session: Session | null }) {
   const [query, setQuery] = useState('')
   const [showOrder, setShowOrder] = useState(false)
   const [showProduct, setShowProduct] = useState(false)
+  const [showBundle, setShowBundle] = useState(false)
+  const [bundleLines, setBundleLines] = useState([{ productId: '', quantity: 1 }, { productId: '', quantity: 1 }])
+  const [showSearch, setShowSearch] = useState(false)
+  const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [notice, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(null)
@@ -66,9 +70,15 @@ function OrderApp({ session }: { session: Session | null }) {
   }
   useEffect(() => { void loadCloud() }, [session])
   useEffect(() => {
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void loadCloud() }
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => { window.removeEventListener('focus', refreshWhenVisible); document.removeEventListener('visibilitychange', refreshWhenVisible) }
+  }, [session])
+  useEffect(() => {
     if (!supabase || !workspaceId) return
     const client = supabase
-    const channel = client.channel('tanger-orders-live').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadCloud).subscribe()
+    const channel = client.channel(`tanger-orders-${workspaceId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadCloud).subscribe()
     return () => { void client.removeChannel(channel) }
   }, [workspaceId])
 
@@ -114,25 +124,43 @@ function OrderApp({ session }: { session: Session | null }) {
     setShowProduct(false)
   }
 
+  async function addBundle(form: HTMLFormElement) {
+    const values = new FormData(form)
+    const components = bundleLines.filter((line) => line.productId).map((line) => ({ productId: line.productId, quantity: Math.max(1, line.quantity) }))
+    if (components.length < 2) { setNotice('Choose at least two products for the bundle.'); return }
+    const bundle = { id: uid(), name: String(values.get('name')), cost: 0, price: Number(values.get('price')) || 0, stock: 0, lowStockAt: 0, components }
+    setProducts((all) => [...all, bundle])
+    if (supabase && workspaceId) {
+      const { error } = await supabase.from('products').insert({ workspace_id: workspaceId, name: bundle.name, cost: 0, price: bundle.price, stock: 0, low_stock_at: 0, components: bundle.components })
+      if (error) setNotice(error.message)
+    }
+    setBundleLines([{ productId: '', quantity: 1 }, { productId: '', quantity: 1 }])
+    setShowBundle(false)
+  }
+
   return <main className="app-shell">
     <header className="topbar">
       <div><p className="eyebrow">LOCAL DELIVERY · TANGER</p><h1>Tanger Orders</h1></div>
-      <button className="avatar" title="Account">S</button>
+      <button className="avatar" title="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(!showAccountMenu)}>S</button>
     </header>
 
-    <section className="signal"><span>●</span>{notice}</section>
+    {showAccountMenu && <section className="account-menu">
+      <p>Shared workspace</p>
+      <strong>{workspaceCode ?? 'Loading code…'}</strong>
+      <button onClick={() => void loadCloud()}>Refresh shared orders</button>
+      <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>Sign out</button>
+    </section>}
 
     {supabase && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
-    {workspaceCode && <section className="workspace-code">SHARE WITH YOUR PARTNER · CODE <b>{workspaceCode}</b><button onClick={() => void supabase?.auth.signOut()}>Sign out</button></section>}
     {tab === 'orders' && <section className="page">
-      <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div>
-      <label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>
+      <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
+      {showSearch && <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>}
       <div className="status-scroll">{statuses.slice(0, 5).map((status) => <span className={`status ${status.toLowerCase().replaceAll(' ', '-')}`} key={status}>{status} <b>{orders.filter(o => o.status === status).length}</b></span>)}</div>
       <div className="order-list">{visibleOrders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} onStatus={changeStatus} />)}</div>
     </section>}
 
     {tab === 'inventory' && <section className="page">
-      <div className="page-heading"><div><h2>Inventory</h2><p>Products and bundles you are ready to sell</p></div><button className="primary" onClick={() => setShowProduct(true)}>+ Add product</button></div>
+      <div className="page-heading"><div><h2>Inventory</h2><p>Products and bundles you are ready to sell</p></div><div className="inventory-actions"><button className="secondary" onClick={() => setShowBundle(true)}>◇ Bundle</button><button className="primary" onClick={() => setShowProduct(true)}>+ Product</button></div></div>
       <div className="inventory-list">{products.map((product) => <article className="inventory-card" key={product.id}><div className="product-mark">{product.components ? '◇' : '□'}</div><div className="grow"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle · Cost ${money(productCost(product, products))}` : `Cost ${money(product.cost)} · Selling ${money(product.price)}`}</p></div><div className="stock"><b>{product.components ? 'Bundle' : product.stock}</b><span>{product.components ? 'calculated' : 'in stock'}</span></div>{!product.components && product.stock <= product.lowStockAt && <span className="low">Low stock</span>}</article>)}</div>
       <aside className="bundle-note"><b>◇ Bundles</b><span>When a bundle is delivered, the stock of every product inside it is reduced automatically.</span></aside>
     </section>}
@@ -148,6 +176,7 @@ function OrderApp({ session }: { session: Session | null }) {
 
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><form onSubmit={(event) => { event.preventDefault(); void addOrder(event.currentTarget) }} className="form"><input required name="client" placeholder="Client name" /><input required name="phone" placeholder="WhatsApp number" /><input required name="address" placeholder="Address (Arabic or English)" /><select name="product">{products.map(p => <option value={p.id} key={p.id}>{p.components ? '◇ ' : ''}{p.name} — {money(p.price)}</option>)}</select><div className="form-row"><input name="quantity" type="number" min="1" defaultValue="1" placeholder="Qty" /><input name="price" type="number" placeholder="Custom price" /></div><div className="form-row"><select name="assignedTo">{(members.length ? members.map(m => ({ value: m.id, label: m.display_name || 'Team member' })) : people.map(p => ({ value: p, label: p }))).map(person => <option value={person.value} key={person.value}>{person.label}</option>)}</select><input name="deliveryCharge" type="number" placeholder="Delivery fee" /></div><textarea name="notes" placeholder="Notes (optional)" /><button className="primary full">Save order</button></form></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><input required name="name" placeholder="Product name" /><div className="form-row"><input required name="cost" type="number" placeholder="Buying cost" /><input required name="price" type="number" placeholder="Selling price" /></div><div className="form-row"><input required name="stock" type="number" placeholder="Opening stock" /><input name="lowStockAt" type="number" defaultValue="3" placeholder="Low-stock warning" /></div><button className="primary full">Save product</button></form></Modal>}
+    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><input required name="name" placeholder="Bundle name" /><input required name="price" type="number" placeholder="Bundle selling price" /><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select><input type="number" min="1" value={line.quantity} aria-label="Quantity" onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} />{bundleLines.length > 2 && <button className="remove-line" type="button" onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}>×</button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}>+ Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
     </>}
   </main>
 }
