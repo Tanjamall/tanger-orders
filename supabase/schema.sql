@@ -34,6 +34,7 @@ create table public.orders (
   client_name text not null,
   phone text not null,
   address text not null,
+  location_url text,
   items jsonb not null check (jsonb_typeof(items) = 'array'),
   status text not null default 'New' check (status in ('New','Confirmed','Preparing','Out for delivery','Delivered','Cancelled')),
   payment_status text not null default 'Pay on delivery' check (payment_status in ('Pay on delivery','Paid','Unpaid')),

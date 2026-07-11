@@ -17,6 +17,7 @@ export type Order = {
   client: string
   phone: string
   address: string
+  locationUrl?: string
   items: OrderItem[]
   status: Status
   paymentStatus: PaymentStatus

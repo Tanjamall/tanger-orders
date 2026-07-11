@@ -42,6 +42,10 @@ function OrderApp({ session }: { session: Session | null }) {
   const [showBundle, setShowBundle] = useState(false)
   const [bundleLines, setBundleLines] = useState([{ productId: '', quantity: 1 }, { productId: '', quantity: 1 }])
   const [showSearch, setShowSearch] = useState(false)
+  const [showRoutePlan, setShowRoutePlan] = useState(false)
+  const [routeBusy, setRouteBusy] = useState(false)
+  const [routeError, setRouteError] = useState('')
+  const [plannedOrders, setPlannedOrders] = useState<Order[]>([])
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [notice, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
@@ -66,7 +70,7 @@ function OrderApp({ session }: { session: Session | null }) {
     if (productRows.error || orderRows.error) { setNotice(`Could not load shared data: ${(productRows.error || orderRows.error)?.message}`); return }
     setWorkspaceCode(workspace.data?.join_code ?? null); setMembers(profileRows.data ?? [])
     setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
-    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at })))
+    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at })))
     setNotice('Live shared data is connected.')
   }
   useEffect(() => { void loadCloud() }, [session])
@@ -107,11 +111,11 @@ function OrderApp({ session }: { session: Session | null }) {
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: String(values.get('phone') || ''), address: String(values.get('address') || ''),
       items: [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }], status: 'New', paymentStatus: 'Pay on delivery',
-      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: 0, createdAt: new Date().toISOString(), notes: String(values.get('notes') || ''),
+      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: 0, createdAt: new Date().toISOString(), locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
     setOrders((all) => [order, ...all])
     if (supabase && workspaceId) {
-      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: 0, notes: order.notes })
+      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: 0, notes: order.notes })
       if (error) setNotice(error.message)
     }
     setShowOrder(false); setNotice('Order added. Connect Supabase to share it with your partner.')
@@ -139,6 +143,22 @@ function OrderApp({ session }: { session: Session | null }) {
     setShowBundle(false)
   }
 
+  async function planRoute() {
+    const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status))
+    if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
+    if (!navigator.geolocation) { setRouteError('Location is not available on this phone.'); setShowRoutePlan(true); return }
+    setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      try {
+        const token = (await supabase?.auth.getSession())?.data.session?.access_token
+        const response = await fetch('/api/plan-route', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ origin: { latitude: coords.latitude, longitude: coords.longitude }, orders: deliveries.map(({ id, address, locationUrl }) => ({ id, address, locationUrl })) }) })
+        const data = await response.json() as { orderIds?: string[]; error?: string }
+        if (!response.ok || !data.orderIds) throw new Error(data.error || 'Could not plan this route.')
+        setPlannedOrders(data.orderIds.map((id) => deliveries.find((order) => order.id === id)).filter((order): order is Order => Boolean(order)))
+      } catch (error) { setRouteError(error instanceof Error ? error.message : 'Could not plan this route.') } finally { setRouteBusy(false) }
+    }, () => { setRouteBusy(false); setRouteError('Allow location access to plan the deliveries from where you are.') }, { enableHighAccuracy: true, timeout: 10000 })
+  }
+
   return <main className="app-shell">
     <header className="topbar">
       <div><p className="eyebrow">LOCAL DELIVERY · TANGER</p><h1>Tanger Orders</h1></div>
@@ -154,7 +174,7 @@ function OrderApp({ session }: { session: Session | null }) {
 
     {supabase && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
     {tab === 'orders' && <section className="page">
-      <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
+      <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className="route-button" onClick={() => void planRoute()}>Route</button><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
       {showSearch && <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>}
       <div className="status-scroll" aria-label="Filter orders by status"><button className={`status filter-chip ${statusFilter === 'All' ? 'selected' : ''}`} onClick={() => setStatusFilter('All')}>All <b>{orders.length}</b></button>{statuses.map((status) => <button className={`status filter-chip ${status.toLowerCase().replaceAll(' ', '-')} ${statusFilter === status ? 'selected' : ''}`} key={status} onClick={() => setStatusFilter(status)}>{status} <b>{orders.filter(o => o.status === status).length}</b></button>)}</div>
       <div className="order-list">{visibleOrders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} onStatus={changeStatus} />)}</div>
@@ -175,9 +195,10 @@ function OrderApp({ session }: { session: Session | null }) {
 
     <nav className="bottom-nav"><NavButton icon="▣" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="□" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="◔" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /></nav>
 
-    {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><form onSubmit={(event) => { event.preventDefault(); void addOrder(event.currentTarget) }} className="form"><input required name="client" placeholder="Client name" /><input required name="phone" placeholder="WhatsApp number" /><input required name="address" placeholder="Address (Arabic or English)" /><select name="product">{products.map(p => <option value={p.id} key={p.id}>{p.components ? '◇ ' : ''}{p.name} — {money(p.price)}</option>)}</select><div className="form-row"><input name="quantity" type="number" min="1" defaultValue="1" placeholder="Qty" /><input name="price" type="number" placeholder="Custom price" /></div><div className="form-row"><select name="assignedTo">{(members.length ? members.map(m => ({ value: m.id, label: m.display_name || 'Team member' })) : people.map(p => ({ value: p, label: p }))).map(person => <option value={person.value} key={person.value}>{person.label}</option>)}</select><input name="deliveryCharge" type="number" placeholder="Delivery fee" /></div><textarea name="notes" placeholder="Notes (optional)" /><button className="primary full">Save order</button></form></Modal>}
+    {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><form onSubmit={(event) => { event.preventDefault(); void addOrder(event.currentTarget) }} className="form"><input required name="client" placeholder="Client name" /><input required name="phone" placeholder="WhatsApp number" /><input required name="address" placeholder="Address (Arabic or English)" /><input name="locationUrl" type="url" placeholder="Google Maps location link (optional)" /><select name="product">{products.map(p => <option value={p.id} key={p.id}>{p.components ? '◇ ' : ''}{p.name} — {money(p.price)}</option>)}</select><div className="form-row"><input name="quantity" type="number" min="1" defaultValue="1" placeholder="Qty" /><input name="price" type="number" placeholder="Custom price" /></div><div className="form-row"><select name="assignedTo">{(members.length ? members.map(m => ({ value: m.id, label: m.display_name || 'Team member' })) : people.map(p => ({ value: p, label: p }))).map(person => <option value={person.value} key={person.value}>{person.label}</option>)}</select><input name="deliveryCharge" type="number" placeholder="Delivery fee" /></div><textarea name="notes" placeholder="Notes (optional)" /><button className="primary full">Save order</button></form></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><input required name="name" placeholder="Product name" /><div className="form-row"><input required name="cost" type="number" placeholder="Buying cost" /><input required name="price" type="number" placeholder="Selling price" /></div><div className="form-row"><input required name="stock" type="number" placeholder="Opening stock" /><input name="lowStockAt" type="number" defaultValue="3" placeholder="Low-stock warning" /></div><button className="primary full">Save product</button></form></Modal>}
     {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><input required name="name" placeholder="Bundle name" /><input required name="price" type="number" placeholder="Bundle selling price" /><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select><input type="number" min="1" value={line.quantity} aria-label="Quantity" onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} />{bundleLines.length > 2 && <button className="remove-line" type="button" onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}>×</button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}>+ Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
+    {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank">Navigate ↗</a></article>)}</div></Modal>}
     </>}
   </main>
 }
@@ -192,6 +213,7 @@ function OrderCard({ order, products, members, onStatus }: { order: Order; produ
 function NavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) { return <button className={active ? 'nav-active' : ''} onClick={onClick}><span>{icon}</span>{label}</button> }
 function Metric({ label, value }: { label: string; value: string }) { return <article className="metric"><p>{label}</p><strong>{value}</strong></article> }
 function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</section></div> }
+function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
 
 function AuthScreen() {
   const [signUp, setSignUp] = useState(false); const [message, setMessage] = useState('')
