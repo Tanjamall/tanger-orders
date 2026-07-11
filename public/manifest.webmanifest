@@ -1,0 +1,10 @@
+{
+  "name": "Tanger Orders",
+  "short_name": "Orders",
+  "description": "Shared local delivery order tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f1e8",
+  "theme_color": "#133b32",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
