@@ -1,7 +1,7 @@
 alter table public.workspaces add column if not exists created_by uuid references auth.users on delete set null;
-update public.workspaces w set created_by = source.id from lateral (
+update public.workspaces w set created_by = (
   select p.id from public.profiles p where p.workspace_id = w.id order by p.created_at asc limit 1
-) source where w.created_by is null;
+) where w.created_by is null;
 
 create or replace function public.create_workspace(workspace_name text) returns public.workspaces language plpgsql security definer set search_path = public as $$
 declare created public.workspaces;
