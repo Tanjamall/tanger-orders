@@ -162,9 +162,9 @@ function OrderApp({ session }: { session: Session | null }) {
     await loadCloud(); setShowAccountMenu(false)
   }
 
-  async function deleteWorkspace() {
-    if (!supabase || !workspaceId || !window.confirm('Delete this workspace and all of its orders, inventory, and profit history? This cannot be undone.')) return
-    const { error } = await supabase.rpc('delete_workspace', { target_workspace_id: workspaceId })
+  async function deleteWorkspace(targetWorkspaceId: string, workspaceName: string) {
+    if (!supabase || !window.confirm(`Delete “${workspaceName}” and all of its orders, inventory, and profit history? This cannot be undone.`)) return
+    const { error } = await supabase.rpc('delete_workspace', { target_workspace_id: targetWorkspaceId })
     if (error) { setNotice(error.message); return }
     setShowAccountMenu(false); await loadCloud()
   }
@@ -195,10 +195,9 @@ function OrderApp({ session }: { session: Session | null }) {
       <p>Shared workspace</p>
       <strong>{workspaceCode ?? 'Loading code…'}</strong>
       <p className="workspace-label">Your workspaces</p>
-      <div className="workspace-list">{workspaces.map((workspace) => <button key={workspace.id} className={workspace.id === workspaceId ? 'current-workspace' : ''} onClick={() => void switchWorkspace(workspace.id)}>⌂ {workspace.name}{workspace.id === workspaceId && ' · Current'}</button>)}</div>
+      <div className="workspace-list">{workspaces.map((workspace) => <div className={`workspace-row ${workspace.id === workspaceId ? 'current-workspace' : ''}`} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}>⌂ {workspace.name}{workspace.id === workspaceId && ' · Current'}</button>{workspace.is_owner && <button className="row-delete" aria-label={`Delete ${workspace.name}`} title="Delete workspace" onClick={() => void deleteWorkspace(workspace.id, workspace.name)}>⌫</button>}</div>)}</div>
       <div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>＋ Create</button><button onClick={() => void manageWorkspace('join')}>↗ Join</button></div>
       <button onClick={() => void loadCloud()}>↻ Refresh shared orders</button>
-      {workspaces.find((workspace) => workspace.id === workspaceId)?.is_owner && <button className="delete-workspace" onClick={() => void deleteWorkspace()}>⌫ Delete this workspace</button>}
       <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>↪ Sign out</button>
     </section>}
 
