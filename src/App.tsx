@@ -50,6 +50,7 @@ function OrderApp({ session }: { session: Session | null }) {
   const [notice, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(null)
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string }[]>([])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
 
   useEffect(() => { localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders])
@@ -69,6 +70,8 @@ function OrderApp({ session }: { session: Session | null }) {
     ])
     if (productRows.error || orderRows.error) { setNotice(`Could not load shared data: ${(productRows.error || orderRows.error)?.message}`); return }
     setWorkspaceCode(workspace.data?.join_code ?? null); setMembers(profileRows.data ?? [])
+    const { data: memberships } = await supabase.rpc('list_my_workspaces')
+    setWorkspaces(memberships ?? [])
     setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
     setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at })))
     setNotice('Live shared data is connected.')
@@ -143,6 +146,22 @@ function OrderApp({ session }: { session: Session | null }) {
     setShowBundle(false)
   }
 
+  async function manageWorkspace(action: 'create' | 'join') {
+    if (!supabase) return
+    const value = window.prompt(action === 'create' ? 'New workspace name' : 'Workspace code')
+    if (!value) return
+    const { error } = await supabase.rpc(action === 'create' ? 'create_workspace' : 'join_workspace', action === 'create' ? { workspace_name: value } : { code: value })
+    if (error) { setNotice(error.message); return }
+    await loadCloud()
+  }
+
+  async function switchWorkspace(id: string) {
+    if (!supabase || id === workspaceId) return
+    const { error } = await supabase.rpc('switch_workspace', { target_workspace_id: id })
+    if (error) { setNotice(error.message); return }
+    await loadCloud(); setShowAccountMenu(false)
+  }
+
   async function planRoute() {
     const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status))
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
@@ -168,6 +187,9 @@ function OrderApp({ session }: { session: Session | null }) {
     {showAccountMenu && <section className="account-menu">
       <p>Shared workspace</p>
       <strong>{workspaceCode ?? 'Loading code…'}</strong>
+      <p className="workspace-label">Your workspaces</p>
+      <div className="workspace-list">{workspaces.map((workspace) => <button key={workspace.id} className={workspace.id === workspaceId ? 'current-workspace' : ''} onClick={() => void switchWorkspace(workspace.id)}>{workspace.name}{workspace.id === workspaceId && ' · Current'}</button>)}</div>
+      <div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>+ Create workspace</button><button onClick={() => void manageWorkspace('join')}>+ Join workspace</button></div>
       <button onClick={() => void loadCloud()}>Refresh shared orders</button>
       <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>Sign out</button>
     </section>}
