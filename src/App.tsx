@@ -36,6 +36,7 @@ function OrderApp({ session }: { session: Session | null }) {
   const [orders, setOrders] = useState<Order[]>(() => JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders)
   const [products, setProducts] = useState<Product[]>(() => JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
   const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<Status | 'All'>('All')
   const [showOrder, setShowOrder] = useState(false)
   const [showProduct, setShowProduct] = useState(false)
   const [showBundle, setShowBundle] = useState(false)
@@ -92,7 +93,7 @@ function OrderApp({ session }: { session: Session | null }) {
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs }
   }, { revenue: 0, profit: 0 }), [delivered, products])
 
-  const visibleOrders = orders.filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()))
+  const visibleOrders = orders.filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
   const changeStatus = async (id: string, status: Status) => {
     setOrders((all) => all.map((order) => order.id === id ? { ...order, status } : order))
     if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status }).eq('id', id); if (error) setNotice(error.message) }
@@ -155,7 +156,7 @@ function OrderApp({ session }: { session: Session | null }) {
     {tab === 'orders' && <section className="page">
       <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
       {showSearch && <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>}
-      <div className="status-scroll">{statuses.slice(0, 5).map((status) => <span className={`status ${status.toLowerCase().replaceAll(' ', '-')}`} key={status}>{status} <b>{orders.filter(o => o.status === status).length}</b></span>)}</div>
+      <div className="status-scroll" aria-label="Filter orders by status"><button className={`status filter-chip ${statusFilter === 'All' ? 'selected' : ''}`} onClick={() => setStatusFilter('All')}>All <b>{orders.length}</b></button>{statuses.map((status) => <button className={`status filter-chip ${status.toLowerCase().replaceAll(' ', '-')} ${statusFilter === status ? 'selected' : ''}`} key={status} onClick={() => setStatusFilter(status)}>{status} <b>{orders.filter(o => o.status === status).length}</b></button>)}</div>
       <div className="order-list">{visibleOrders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} onStatus={changeStatus} />)}</div>
     </section>}
 
