@@ -2,6 +2,7 @@ alter table public.workspaces add column if not exists created_by uuid reference
 update public.workspaces w set created_by = (
   select p.id from public.profiles p where p.workspace_id = w.id order by p.created_at asc limit 1
 ) where w.created_by is null;
+drop function if exists public.list_my_workspaces();
 
 create or replace function public.create_workspace(workspace_name text) returns public.workspaces language plpgsql security definer set search_path = public as $$
 declare created public.workspaces;
