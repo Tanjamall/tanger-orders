@@ -102,7 +102,9 @@ function OrderApp({ session }: { session: Session | null }) {
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs }
   }, { revenue: 0, profit: 0 }), [delivered, products])
 
-  const visibleOrders = orders.filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
+  const visibleOrders = orders
+    .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
+    .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
   const changeStatus = async (id: string, status: Status) => {
     setOrders((all) => all.map((order) => order.id === id ? { ...order, status } : order))
     if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status }).eq('id', id); if (error) setNotice(error.message) }
