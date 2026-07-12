@@ -10,6 +10,10 @@ const statuses: Status[] = ['New', 'Confirmed', 'Preparing', 'Out for delivery',
 const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
 const money = (value: number) => `${Math.round(value)} DH`
 const uid = () => crypto.randomUUID()
+const dateKey = (value: Date | string) => { const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
+const monthStartKey = () => { const today = new Date(); return dateKey(new Date(today.getFullYear(), today.getMonth(), 1)) }
+const dateStamp = (key: string) => { const [year, month, day] = key.split('-'); return `${day}/${month}/${year}` }
+function dateHeading(key: string) { const today = dateKey(new Date()); const yesterday = dateKey(new Date(Date.now() - 86400000)); return key === today ? 'Today' : key === yesterday ? 'Yesterday' : dateStamp(key) }
 
 function productCost(product: Product, all: Product[]): number {
   if (!product.components) return product.cost
@@ -56,6 +60,8 @@ function OrderApp({ session }: { session: Session | null }) {
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>([])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
+  const [profitStart, setProfitStart] = useState(monthStartKey)
+  const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
 
   useEffect(() => { localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders])
   useEffect(() => { localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products])
@@ -95,18 +101,27 @@ function OrderApp({ session }: { session: Session | null }) {
   }, [workspaceId])
 
   const delivered = orders.filter((order) => order.status === 'Delivered')
-  const totals = useMemo(() => delivered.reduce((sum, order) => {
+  const profitOrders = delivered.filter((order) => {
+    const orderDate = dateKey(order.createdAt)
+    return (!profitStart || orderDate >= profitStart) && (!profitEnd || orderDate <= profitEnd)
+  })
+  const profitTotals = useMemo(() => profitOrders.reduce((sum, order) => {
     const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
     const costs = order.items.reduce((value, item) => {
       const product = products.find((candidate) => candidate.id === item.productId)
       return value + (product ? productCost(product, products) * item.quantity : 0)
     }, 0) + order.deliveryCharge + order.otherExpense
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs }
-  }, { revenue: 0, profit: 0 }), [delivered, products])
+  }, { revenue: 0, profit: 0 }), [profitOrders, products])
 
   const visibleOrders = orders
     .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
     .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+  const ordersByDate = visibleOrders.reduce<{ key: string; orders: Order[] }[]>((groups, order) => {
+    const key = dateKey(order.createdAt); const group = groups.find((item) => item.key === key)
+    if (group) group.orders.push(order); else groups.push({ key, orders: [order] })
+    return groups
+  }, [])
   const changeStatus = async (id: string, status: Status) => {
     setOrders((all) => all.map((order) => order.id === id ? { ...order, status } : order))
     if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status }).eq('id', id); if (error) setNotice(error.message) }
@@ -243,7 +258,7 @@ function OrderApp({ session }: { session: Session | null }) {
       <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className="route-button" onClick={() => void planRoute()}>Route</button><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
       {showSearch && <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>}
       <div className="status-scroll" aria-label="Filter orders by status"><button className={`status filter-chip ${statusFilter === 'All' ? 'selected' : ''}`} onClick={() => setStatusFilter('All')}>All <b>{orders.length}</b></button>{statuses.map((status) => <button className={`status filter-chip ${status.toLowerCase().replaceAll(' ', '-')} ${statusFilter === status ? 'selected' : ''}`} key={status} onClick={() => setStatusFilter(status)}>{status} <b>{orders.filter(o => o.status === status).length}</b></button>)}</div>
-      <div className="order-list">{visibleOrders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} onStatus={changeStatus} onEdit={setEditingOrder} />)}</div>
+      <div className="order-list">{ordersByDate.map((group) => <section className="order-day" key={group.key}><h3>{dateHeading(group.key)}</h3>{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} onStatus={changeStatus} onEdit={setEditingOrder} />)}</section>)}</div>
     </section>}
 
     {tab === 'inventory' && <section className="page">
@@ -253,10 +268,11 @@ function OrderApp({ session }: { session: Session | null }) {
     </section>}
 
     {tab === 'profit' && <section className="page">
-      <div className="page-heading"><div><h2>Profit</h2><p>Delivered orders only</p></div><button className="period">This month⌄</button></div>
-      <section className="hero-profit"><p>NET PROFIT</p><strong>{money(totals.profit)}</strong><span>From {delivered.length} delivered orders</span></section>
-      <div className="metric-grid"><Metric label="Sales" value={money(totals.revenue)} /><Metric label="This week" value={money(totals.profit)} /><Metric label="Today" value={money(orders.filter(o => o.status === 'Delivered' && new Date(o.createdAt).toDateString() === new Date().toDateString()).reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0), 0))} /></div>
-      <h3 className="section-title">Completed sales</h3><div className="profit-list">{delivered.map(order => <article key={order.id}><div><b>{order.client}</b><p>{new Date(order.createdAt).toLocaleDateString('en-GB')}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}</div>
+      <div className="page-heading"><div><h2>Profit</h2><p>Delivered orders only</p></div></div>
+      <section className="date-filter" aria-label="Choose profit date range"><div><label>From<input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></label><label>To<input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></label></div><div className="date-quick-actions"><button onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div></section>
+      <section className="hero-profit"><p>NET PROFIT</p><strong>{money(profitTotals.profit)}</strong><span>From {profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</span></section>
+      <div className="metric-grid"><Metric label="Sales" value={money(profitTotals.revenue)} /><Metric label="Orders" value={String(profitOrders.length)} /><Metric label="Average profit" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></div>
+      <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
     </section>}
 
     {tab === 'map' && <section className="page map-page"><div className="page-heading"><div><h2>Delivery map</h2><p>Orders with a Google Maps location</p></div></div><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}
