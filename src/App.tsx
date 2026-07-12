@@ -309,4 +309,48 @@ function WorkspaceScreen({ onReady }: { onReady: () => Promise<void> }) {
   return <main className="gate"><p className="eyebrow">FIRST-TIME SETUP</p><h1>{mode === 'create' ? 'Create your shared workspace' : 'Join your partner'}</h1><p>{mode === 'create' ? 'You will receive a code to share with your friend.' : 'Enter the code shown in your partner’s app.'}</p><form className="form auth-form" onSubmit={submit}><input name="value" required placeholder={mode === 'create' ? 'Business name, e.g. Tanger Finds' : 'Workspace code'} /><button className="primary full">{mode === 'create' ? 'Create workspace' : 'Join workspace'}</button></form><button className="link-button" onClick={() => setMode(mode === 'create' ? 'join' : 'create')}>{mode === 'create' ? 'I have a code' : 'I need to create one'}</button>{message && <p className="message">{message}</p>}</main>
 }
 
-function DeliveryMap({ orders }: { orders: Order[] }) { const element = useRef<HTMLDivElement>(null); const map = useRef<L.Map | null>(null); const [resolvedOrders, setResolvedOrders] = useState<Order[]>(orders); useEffect(() => { void Promise.all(orders.map(async (order): Promise<Order> => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) }))).then(setResolvedOrders) }, [orders]); useEffect(() => { if (!element.current) return; const points: { order: Order; coordinates: Coordinates }[] = []; resolvedOrders.forEach((order) => { const coordinates = mapCoordinates(order.locationUrl); if (coordinates) points.push({ order, coordinates }) }); if (!map.current) { map.current = L.map(element.current, { zoomControl: false }).setView([35.7595, -5.834], 12); L.control.zoom({ position: 'bottomright' }).addTo(map.current); L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current) } const layer = L.layerGroup().addTo(map.current); points.forEach(({ order, coordinates }) => { L.circleMarker([coordinates.latitude, coordinates.longitude], { radius: 9, color: '#143b32', weight: 2, fillColor: order.status === 'Out for delivery' ? '#e8b643' : '#62a985', fillOpacity: 1 }).bindPopup(`<strong>${order.client}</strong><br>${order.address}`).addTo(layer) }); if (points.length) map.current.fitBounds(L.latLngBounds(points.map(({ coordinates }) => [coordinates.latitude, coordinates.longitude])), { padding: [30, 30], maxZoom: 14 }); return () => { layer.remove() } }, [resolvedOrders]); return <><div ref={element} className="delivery-map" />{!resolvedOrders.some((order) => mapCoordinates(order.locationUrl)) && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</> }
+function DeliveryMap({ orders }: { orders: Order[] }) {
+  const element = useRef<HTMLDivElement>(null);
+  const map = useRef<L.Map | null>(null);
+  const [resolvedOrders, setResolvedOrders] = useState<Order[]>(orders);
+  const home: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
+  const homeLink = 'https://maps.app.goo.gl/D3tjxccijVYFVZC89';
+
+  useEffect(() => {
+    void Promise.all(orders.map(async (order): Promise<Order> => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) }))).then(setResolvedOrders);
+  }, [orders]);
+
+  useEffect(() => {
+    if (!element.current) return;
+    const points: { order: Order; coordinates: Coordinates }[] = [];
+    resolvedOrders.forEach((order) => {
+      const coordinates = mapCoordinates(order.locationUrl);
+      if (coordinates) points.push({ order, coordinates });
+    });
+    points.sort((a, b) => distanceKm(home, a.coordinates) - distanceKm(home, b.coordinates));
+
+    if (!map.current) {
+      map.current = L.map(element.current, { zoomControl: false }).setView([home.latitude, home.longitude], 12);
+      L.control.zoom({ position: 'bottomright' }).addTo(map.current);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
+    }
+
+    const layer = L.layerGroup().addTo(map.current);
+    L.circleMarker([home.latitude, home.longitude], { radius: 11, color: '#fff8eb', weight: 3, fillColor: '#c85a45', fillOpacity: 1 })
+      .bindPopup(`<strong>Hay El Majd</strong><br><a href="${homeLink}" target="_blank">Open in Google Maps ↗</a>`)
+      .addTo(layer);
+
+    points.forEach(({ order, coordinates }, index) => {
+      const icon = L.divIcon({ className: 'delivery-number-pin', html: String(index + 1), iconSize: [28, 28], iconAnchor: [14, 14] });
+      L.marker([coordinates.latitude, coordinates.longitude], { icon })
+        .bindPopup(`<strong>${order.client}</strong><br>${order.address}<br><a href="${navigationUrl(order)}" target="_blank">Open in Google Maps ↗</a>`)
+        .addTo(layer);
+    });
+
+    const bounds: [number, number][] = [[home.latitude, home.longitude], ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
+    map.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14 });
+    return () => { layer.remove(); };
+  }, [resolvedOrders]);
+
+  return <><div ref={element} className="delivery-map" />{!resolvedOrders.some((order) => mapCoordinates(order.locationUrl)) && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
+}
