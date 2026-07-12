@@ -202,16 +202,19 @@ function OrderApp({ session }: { session: Session | null }) {
   }
 
   async function planRoute() {
-    const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status))
+    const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status) && Boolean(order.locationUrl?.trim()))
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
     if (!navigator.geolocation) { setRouteError('Location is not available on this phone.'); setShowRoutePlan(true); return }
     setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       try {
-        const resolvedDeliveries: Order[] = await Promise.all(deliveries.map(async (order): Promise<Order> => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) })))
-        const remaining: { order: Order; coordinates: Coordinates }[] = []
-        resolvedDeliveries.forEach((order) => { const coordinates = mapCoordinates(order.locationUrl); if (coordinates) remaining.push({ order, coordinates }) })
-        if (!remaining.length) throw new Error('Add a full Google Maps location link to at least one active order.')
+        const resolvedDeliveries = await Promise.all(deliveries.map(async (order): Promise<{ order: Order; coordinates: Coordinates } | null> => {
+          const location = await resolveLocation(order.locationUrl)
+          const coordinates = location.coordinates || mapCoordinates(location.locationUrl)
+          return coordinates ? { order, coordinates } : null
+        }))
+        const remaining = resolvedDeliveries.filter((delivery): delivery is { order: Order; coordinates: Coordinates } => delivery !== null)
+        if (!remaining.length) throw new Error('None of the active delivery links could be read. Open the Map tab once, then try again.')
         const planned: Order[] = []; let current: Coordinates = { latitude: coords.latitude, longitude: coords.longitude }
         while (remaining.length) { const nearestIndex = remaining.reduce((best, item, index) => distanceKm(current, item.coordinates) < distanceKm(current, remaining[best].coordinates) ? index : best, 0); const [next] = remaining.splice(nearestIndex, 1); planned.push(next.order); current = next.coordinates }
         setPlannedOrders(planned)
@@ -274,7 +277,7 @@ function OrderCard({ order, products, members, onStatus, onEdit }: { order: Orde
   const lines = order.items.map((item) => `${item.quantity}× ${products.find((p) => p.id === item.productId)?.name ?? 'Product'}`).join(', ')
   const assignee = members.find(member => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
   const total = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
-  return <article className="order-card compact-order"><div className="compact-order-head"><div className="client-block"><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank">{order.phone} ↗</a></div><div className="order-head-actions"><a className="map-order" href={navigationUrl(order)} target="_blank" rel="noreferrer" title="Open in Google Maps">⌖</a><button className="edit-order" title="Edit order" onClick={() => onEdit(order)}>✎</button><select className={`status-picker ${order.status.toLowerCase().replaceAll(' ', '-')}`} aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div></div><p className="compact-items">{lines}</p><p className="compact-address">⌖ {order.address}</p><div className="compact-meta"><span>◉ {assignee}</span><span>{order.paymentStatus}</span><b>{money(total)}</b></div></article>
+  return <article className="order-card compact-order"><div className="compact-order-head"><div className="client-block"><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank">{order.phone} ↗</a></div><div className="order-head-actions">{order.locationUrl?.trim() && <a className="map-order" href={navigationUrl(order)} target="_blank" rel="noreferrer" title="Open in Google Maps">⌖</a>}<button className="edit-order" title="Edit order" onClick={() => onEdit(order)}>✎</button><select className={`status-picker ${order.status.toLowerCase().replaceAll(' ', '-')}`} aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div></div><p className="compact-items">{lines}</p><p className="compact-address">⌖ {order.address}</p><div className="compact-meta"><span>◉ {assignee}</span><span>{order.paymentStatus}</span><b>{money(total)}</b></div></article>
 }
 
 function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'map'; label: string; active: boolean; onClick: () => void }) { return <button className={active ? 'nav-active' : ''} onClick={onClick}><NavIcon name={icon} />{label}</button> }
@@ -303,14 +306,24 @@ function mapCoordinates(locationUrl?: string): Coordinates | null {
   return null
 }
 type LocationResolution = { locationUrl?: string; coordinates?: Coordinates }
+function locationCacheKey(locationUrl: string) { return `tanger-location:${locationUrl}` }
 async function resolveLocation(locationUrl?: string): Promise<LocationResolution> {
   const directCoordinates = mapCoordinates(locationUrl)
   if (!locationUrl || directCoordinates) return { locationUrl, coordinates: directCoordinates ?? undefined }
   try {
+    const cached = localStorage.getItem(locationCacheKey(locationUrl))
+    if (cached) {
+      const result = JSON.parse(cached) as LocationResolution
+      if (result.coordinates) return result
+    }
+  } catch { /* A blocked storage area should not prevent location lookup. */ }
+  try {
     const response = await fetch('/api/resolve-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) })
     if (!response.ok) return { locationUrl }
     const data = await response.json() as LocationResolution
-    return { locationUrl: data.locationUrl || locationUrl, coordinates: data.coordinates || mapCoordinates(data.locationUrl) || undefined }
+    const result = { locationUrl: data.locationUrl || locationUrl, coordinates: data.coordinates || mapCoordinates(data.locationUrl) || undefined }
+    if (result.coordinates) localStorage.setItem(locationCacheKey(locationUrl), JSON.stringify(result))
+    return result
   } catch { return { locationUrl } }
 }
 async function expandedLocationUrl(locationUrl?: string) { return (await resolveLocation(locationUrl)).locationUrl }
