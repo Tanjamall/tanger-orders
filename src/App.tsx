@@ -206,8 +206,9 @@ function OrderApp({ session }: { session: Session | null }) {
     setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       try {
-        const resolvedDeliveries = await Promise.all(deliveries.map(async (order) => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) })))
-        const remaining = resolvedDeliveries.map((order) => ({ order, coordinates: mapCoordinates(order.locationUrl) })).filter((item): item is { order: Order; coordinates: Coordinates } => Boolean(item.coordinates))
+        const resolvedDeliveries: Order[] = await Promise.all(deliveries.map(async (order): Promise<Order> => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) })))
+        const remaining: { order: Order; coordinates: Coordinates }[] = []
+        resolvedDeliveries.forEach((order) => { const coordinates = mapCoordinates(order.locationUrl); if (coordinates) remaining.push({ order, coordinates }) })
         if (!remaining.length) throw new Error('Add a full Google Maps location link to at least one active order.')
         const planned: Order[] = []; let current: Coordinates = { latitude: coords.latitude, longitude: coords.longitude }
         while (remaining.length) { const nearestIndex = remaining.reduce((best, item, index) => distanceKm(current, item.coordinates) < distanceKm(current, remaining[best].coordinates) ? index : best, 0); const [next] = remaining.splice(nearestIndex, 1); planned.push(next.order); current = next.coordinates }
