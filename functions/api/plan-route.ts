@@ -21,7 +21,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': env.GOOGLE_ROUTES_API_KEY, 'X-Goog-FieldMask': 'routes.optimizedIntermediateWaypointIndex' },
     body: JSON.stringify({ origin, destination: origin, intermediates: body.orders.map(waypoint), travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE', optimizeWaypointOrder: true }),
   })
-  if (!response.ok) return Response.json({ error: 'Google could not plan this route. Check the location links and Routes API settings.' }, { status: 502, headers: cors })
+  if (!response.ok) {
+    const googleError = await response.json().catch(() => null) as { error?: { message?: string } } | null
+    return Response.json({ error: googleError?.error?.message || 'Google rejected the route request. Check the Routes API key and billing.' }, { status: 502, headers: cors })
+  }
   const data = await response.json() as { routes?: { optimizedIntermediateWaypointIndex?: number[] }[] }
   const indexes = data.routes?.[0]?.optimizedIntermediateWaypointIndex ?? body.orders.map((_, index) => index)
   return Response.json({ orderIds: indexes.map((index) => body.orders![index].id) }, { headers: cors })
