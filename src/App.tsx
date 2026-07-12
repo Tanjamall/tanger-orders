@@ -204,13 +204,13 @@ function OrderApp({ session }: { session: Session | null }) {
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
     if (!navigator.geolocation) { setRouteError('Location is not available on this phone.'); setShowRoutePlan(true); return }
     setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
-    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
       try {
-        const token = (await supabase?.auth.getSession())?.data.session?.access_token
-        const response = await fetch('/api/plan-route', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ origin: { latitude: coords.latitude, longitude: coords.longitude }, orders: deliveries.map(({ id, address, locationUrl }) => ({ id, address, locationUrl })) }) })
-        const data = await response.json() as { orderIds?: string[]; error?: string }
-        if (!response.ok || !data.orderIds) throw new Error(data.error || 'Could not plan this route.')
-        setPlannedOrders(data.orderIds.map((id) => deliveries.find((order) => order.id === id)).filter((order): order is Order => Boolean(order)))
+        const remaining = deliveries.map((order) => ({ order, coordinates: mapCoordinates(order.locationUrl) })).filter((item): item is { order: Order; coordinates: Coordinates } => Boolean(item.coordinates))
+        if (!remaining.length) throw new Error('Add a full Google Maps location link to at least one active order.')
+        const planned: Order[] = []; let current: Coordinates = { latitude: coords.latitude, longitude: coords.longitude }
+        while (remaining.length) { const nearestIndex = remaining.reduce((best, item, index) => distanceKm(current, item.coordinates) < distanceKm(current, remaining[best].coordinates) ? index : best, 0); const [next] = remaining.splice(nearestIndex, 1); planned.push(next.order); current = next.coordinates }
+        setPlannedOrders(planned)
       } catch (error) { setRouteError(error instanceof Error ? error.message : 'Could not plan this route.') } finally { setRouteBusy(false) }
     }, () => { setRouteBusy(false); setRouteError('Allow location access to plan the deliveries from where you are.') }, { enableHighAccuracy: true, timeout: 10000 })
   }
@@ -276,6 +276,9 @@ function NavIcon({ name }: { name: 'orders' | 'inventory' | 'profit' }) { const 
 function Metric({ label, value }: { label: string; value: string }) { return <article className="metric"><p>{label}</p><strong>{value}</strong></article> }
 function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</section></div> }
 function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
+type Coordinates = { latitude: number; longitude: number }
+function mapCoordinates(locationUrl?: string): Coordinates | null { if (!locationUrl) return null; const source = decodeURIComponent(locationUrl); const match = source.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/) || source.match(/[?&](?:q|query)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/); return match ? { latitude: Number(match[1]), longitude: Number(match[2]) } : null }
+function distanceKm(first: Coordinates, second: Coordinates) { const radians = (value: number) => value * Math.PI / 180; const deltaLatitude = radians(second.latitude - first.latitude); const deltaLongitude = radians(second.longitude - first.longitude); const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(deltaLongitude / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
 
 function AuthScreen() {
   const [signUp, setSignUp] = useState(false); const [message, setMessage] = useState('')
