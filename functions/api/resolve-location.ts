@@ -1,14 +1,11 @@
 const headers = { 'Content-Type': 'application/json' }
 
-export const onRequestPost: PagesFunction = async ({ request, waitUntil }) => {
+export const onRequestPost: PagesFunction = async ({ request }) => {
   const { locationUrl } = await request.json() as { locationUrl?: string }
   if (!locationUrl) return Response.json({ error: 'Location link is required.' }, { status: 400, headers })
   let url: URL
   try { url = new URL(locationUrl) } catch { return Response.json({ error: 'Invalid location link.' }, { status: 400, headers }) }
   if (!/(^|\.)(maps\.app\.goo\.gl|goo\.gl|google\.com|maps\.google\.com)$/.test(url.hostname)) return Response.json({ error: 'Only Google Maps links are accepted.' }, { status: 400, headers })
-  const cacheKey = new Request(new URL(`/api/resolve-location?link=${encodeURIComponent(locationUrl)}`, request.url))
-  const cached = await caches.default.match(cacheKey)
-  if (cached) return cached
   const response = await fetch(url.toString(), { redirect: 'follow' })
   const rawPage = await response.text()
   let page = rawPage
@@ -28,7 +25,5 @@ export const onRequestPost: PagesFunction = async ({ request, waitUntil }) => {
     const [latitude, longitude] = pattern.source.startsWith('!2d') ? [second, first] : [first, second]
     if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) { coordinates = { latitude, longitude }; break }
   }
-  const result = Response.json({ locationUrl: response.url, coordinates }, { headers: { ...headers, 'Cache-Control': 'public, max-age=2592000' } })
-  if (coordinates) waitUntil(caches.default.put(cacheKey, result.clone()))
-  return result
+  return Response.json({ locationUrl: response.url, coordinates }, { headers })
 }

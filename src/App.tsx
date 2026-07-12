@@ -397,7 +397,7 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
 
     points.forEach(({ order, coordinates }, index) => {
       const icon = L.divIcon({ className: 'delivery-number-pin', html: `<span>${index + 1}</span>`, iconSize: [28, 28], iconAnchor: [14, 14] });
-      L.marker([coordinates.latitude, coordinates.longitude], { icon })
+      L.marker([coordinates.latitude, coordinates.longitude], { icon, zIndexOffset: 1000 })
         .bindPopup(`<strong>${order.client}</strong><br>${order.address}<br><a href="${navigationUrl(order)}" target="_blank">Open in Google Maps ↗</a>`)
         .addTo(layer);
     });
