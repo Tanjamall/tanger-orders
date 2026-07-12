@@ -52,7 +52,11 @@ export const onRequestPost: PagesFunction = async ({ request }) => {
   let url: URL
   try { url = new URL(locationUrl) } catch { return Response.json({ error: 'Invalid location link.' }, { status: 400, headers }) }
   if (!/(^|\.)(maps\.app\.goo\.gl|goo\.gl|google\.com|maps\.google\.com)$/.test(url.hostname)) return Response.json({ error: 'Only Google Maps links are accepted.' }, { status: 400, headers })
-  const response = await fetch(url.toString(), { redirect: 'follow' })
+  const initialResponse = await fetch(url.toString(), { redirect: 'manual' })
+  const expandedUrl = initialResponse.headers.get('location') || url.toString()
+  const response = initialResponse.status >= 300 && initialResponse.status < 400
+    ? await fetch(expandedUrl, { redirect: 'follow' })
+    : initialResponse
   const rawPage = await response.text()
   const page = safelyDecode(rawPage)
   const coordinatePatterns = [
@@ -64,15 +68,15 @@ export const onRequestPost: PagesFunction = async ({ request }) => {
   ]
   let coordinates: { latitude: number; longitude: number } | undefined
   for (const pattern of coordinatePatterns) {
-    const match = page.match(pattern) || response.url.match(pattern)
+    const match = page.match(pattern) || safelyDecode(expandedUrl).match(pattern) || response.url.match(pattern)
     if (!match) continue
     const first = Number(match[1]); const second = Number(match[2])
     const [latitude, longitude] = pattern.source.startsWith('!2d') ? [second, first] : [first, second]
     if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) { coordinates = { latitude, longitude }; break }
   }
   if (!coordinates) {
-    const plusCode = `${page} ${safelyDecode(response.url)}`.match(/([23456789CFGHJMPQRVWX]{2,7}\+[23456789CFGHJMPQRVWX]{2,})/i)?.[1]?.toUpperCase()
+    const plusCode = `${page} ${safelyDecode(expandedUrl)} ${safelyDecode(response.url)}`.match(/([23456789CFGHJMPQRVWX]{2,7}\+[23456789CFGHJMPQRVWX]{2,})/i)?.[1]?.toUpperCase()
     if (plusCode) coordinates = decodeShortPlusCode(plusCode)
   }
-  return Response.json({ locationUrl: response.url, coordinates }, { headers })
+  return Response.json({ locationUrl: expandedUrl, coordinates }, { headers })
 }
