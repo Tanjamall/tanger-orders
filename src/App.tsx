@@ -283,8 +283,37 @@ function Metric({ label, value }: { label: string; value: string }) { return <ar
 function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</section></div> }
 function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
 type Coordinates = { latitude: number; longitude: number }
-function mapCoordinates(locationUrl?: string): Coordinates | null { if (!locationUrl) return null; const source = decodeURIComponent(locationUrl); const match = source.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/) || source.match(/[?&](?:q|query)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/) || source.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/); return match ? { latitude: Number(match[1]), longitude: Number(match[2]) } : null }
-async function expandedLocationUrl(locationUrl?: string) { if (!locationUrl || !/maps\.app\.goo\.gl/.test(locationUrl)) return locationUrl; const response = await fetch('/api/resolve-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) }); const data = await response.json() as { locationUrl?: string }; return data.locationUrl || locationUrl }
+function mapCoordinates(locationUrl?: string): Coordinates | null {
+  if (!locationUrl) return null
+  const source = decodeURIComponent(locationUrl)
+  const patterns: { expression: RegExp; reverse?: boolean }[] = [
+    { expression: /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
+    { expression: /[?&](?:q|query|ll|center|destination|origin)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
+    { expression: /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/ },
+    { expression: /!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/, reverse: true },
+    { expression: /\/place\/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
+    { expression: /geo:(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
+  ]
+  for (const { expression, reverse } of patterns) {
+    const match = source.match(expression)
+    if (!match) continue
+    const [latitude, longitude] = reverse ? [Number(match[2]), Number(match[1])] : [Number(match[1]), Number(match[2])]
+    if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) return { latitude, longitude }
+  }
+  return null
+}
+type LocationResolution = { locationUrl?: string; coordinates?: Coordinates }
+async function resolveLocation(locationUrl?: string): Promise<LocationResolution> {
+  const directCoordinates = mapCoordinates(locationUrl)
+  if (!locationUrl || directCoordinates) return { locationUrl, coordinates: directCoordinates ?? undefined }
+  try {
+    const response = await fetch('/api/resolve-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) })
+    if (!response.ok) return { locationUrl }
+    const data = await response.json() as LocationResolution
+    return { locationUrl: data.locationUrl || locationUrl, coordinates: data.coordinates || mapCoordinates(data.locationUrl) || undefined }
+  } catch { return { locationUrl } }
+}
+async function expandedLocationUrl(locationUrl?: string) { return (await resolveLocation(locationUrl)).locationUrl }
 function distanceKm(first: Coordinates, second: Coordinates) { const radians = (value: number) => value * Math.PI / 180; const deltaLatitude = radians(second.latitude - first.latitude); const deltaLongitude = radians(second.longitude - first.longitude); const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(deltaLongitude / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
 
 function AuthScreen() {
@@ -312,45 +341,58 @@ function WorkspaceScreen({ onReady }: { onReady: () => Promise<void> }) {
 function DeliveryMap({ orders }: { orders: Order[] }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
-  const [resolvedOrders, setResolvedOrders] = useState<Order[]>(orders);
-  const home: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
-  const homeLink = 'https://maps.app.goo.gl/D3tjxccijVYFVZC89';
+  const markerLayer = useRef<L.LayerGroup | null>(null);
+  const fallbackLocation: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
+  const [currentLocation, setCurrentLocation] = useState<Coordinates>(fallbackLocation);
+  const [usingFallbackLocation, setUsingFallbackLocation] = useState(true);
+  const [resolvedOrders, setResolvedOrders] = useState<{ order: Order; coordinates: Coordinates }[]>([]);
 
   useEffect(() => {
-    void Promise.all(orders.map(async (order): Promise<Order> => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) }))).then(setResolvedOrders);
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => { setCurrentLocation({ latitude: coords.latitude, longitude: coords.longitude }); setUsingFallbackLocation(false); },
+      () => setUsingFallbackLocation(true),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  }, []);
+
+  useEffect(() => {
+    void Promise.all(orders.map(async (order): Promise<{ order: Order; coordinates: Coordinates } | null> => {
+      const location = await resolveLocation(order.locationUrl);
+      const coordinates = location.coordinates || mapCoordinates(location.locationUrl);
+      return coordinates ? { order, coordinates } : null;
+    })).then((locations) => setResolvedOrders(locations.filter((location): location is { order: Order; coordinates: Coordinates } => location !== null)));
   }, [orders]);
 
   useEffect(() => {
     if (!element.current) return;
-    const points: { order: Order; coordinates: Coordinates }[] = [];
-    resolvedOrders.forEach((order) => {
-      const coordinates = mapCoordinates(order.locationUrl);
-      if (coordinates) points.push({ order, coordinates });
-    });
-    points.sort((a, b) => distanceKm(home, a.coordinates) - distanceKm(home, b.coordinates));
+    const points = [...resolvedOrders].sort((a, b) => distanceKm(currentLocation, a.coordinates) - distanceKm(currentLocation, b.coordinates));
 
     if (!map.current) {
-      map.current = L.map(element.current, { zoomControl: false }).setView([home.latitude, home.longitude], 12);
+      map.current = L.map(element.current, { zoomControl: false }).setView([currentLocation.latitude, currentLocation.longitude], 12);
       L.control.zoom({ position: 'bottomright' }).addTo(map.current);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
     }
 
+    markerLayer.current?.remove();
     const layer = L.layerGroup().addTo(map.current);
-    L.circleMarker([home.latitude, home.longitude], { radius: 11, color: '#fff8eb', weight: 3, fillColor: '#c85a45', fillOpacity: 1 })
-      .bindPopup(`<strong>Hay El Majd</strong><br><a href="${homeLink}" target="_blank">Open in Google Maps ↗</a>`)
+    markerLayer.current = layer;
+    const currentLabel = usingFallbackLocation ? 'Hay El Majd (location permission unavailable)' : 'Your current location';
+    L.circleMarker([currentLocation.latitude, currentLocation.longitude], { radius: 11, color: '#fff8eb', weight: 3, fillColor: '#c85a45', fillOpacity: 1 })
+      .bindPopup(`<strong>${currentLabel}</strong>`)
       .addTo(layer);
 
     points.forEach(({ order, coordinates }, index) => {
-      const icon = L.divIcon({ className: 'delivery-number-pin', html: String(index + 1), iconSize: [28, 28], iconAnchor: [14, 14] });
+      const icon = L.divIcon({ className: 'delivery-number-pin', html: `<span>${index + 1}</span>`, iconSize: [28, 28], iconAnchor: [14, 14] });
       L.marker([coordinates.latitude, coordinates.longitude], { icon })
         .bindPopup(`<strong>${order.client}</strong><br>${order.address}<br><a href="${navigationUrl(order)}" target="_blank">Open in Google Maps ↗</a>`)
         .addTo(layer);
     });
 
-    const bounds: [number, number][] = [[home.latitude, home.longitude], ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
+    const bounds: [number, number][] = [[currentLocation.latitude, currentLocation.longitude], ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
     map.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14 });
     return () => { layer.remove(); };
-  }, [resolvedOrders]);
+  }, [resolvedOrders, currentLocation, usingFallbackLocation]);
 
-  return <><div ref={element} className="delivery-map" />{!resolvedOrders.some((order) => mapCoordinates(order.locationUrl)) && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
+  return <><div ref={element} className="delivery-map" />{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
 }
