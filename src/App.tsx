@@ -204,9 +204,10 @@ function OrderApp({ session }: { session: Session | null }) {
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
     if (!navigator.geolocation) { setRouteError('Location is not available on this phone.'); setShowRoutePlan(true); return }
     setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
-    navigator.geolocation.getCurrentPosition(({ coords }) => {
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       try {
-        const remaining = deliveries.map((order) => ({ order, coordinates: mapCoordinates(order.locationUrl) })).filter((item): item is { order: Order; coordinates: Coordinates } => Boolean(item.coordinates))
+        const resolvedDeliveries = await Promise.all(deliveries.map(async (order) => ({ ...order, locationUrl: await expandedLocationUrl(order.locationUrl) })))
+        const remaining = resolvedDeliveries.map((order) => ({ order, coordinates: mapCoordinates(order.locationUrl) })).filter((item): item is { order: Order; coordinates: Coordinates } => Boolean(item.coordinates))
         if (!remaining.length) throw new Error('Add a full Google Maps location link to at least one active order.')
         const planned: Order[] = []; let current: Coordinates = { latitude: coords.latitude, longitude: coords.longitude }
         while (remaining.length) { const nearestIndex = remaining.reduce((best, item, index) => distanceKm(current, item.coordinates) < distanceKm(current, remaining[best].coordinates) ? index : best, 0); const [next] = remaining.splice(nearestIndex, 1); planned.push(next.order); current = next.coordinates }
@@ -278,6 +279,7 @@ function Modal({ title, close, children }: { title: string; close: () => void; c
 function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
 type Coordinates = { latitude: number; longitude: number }
 function mapCoordinates(locationUrl?: string): Coordinates | null { if (!locationUrl) return null; const source = decodeURIComponent(locationUrl); const match = source.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/) || source.match(/[?&](?:q|query)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/); return match ? { latitude: Number(match[1]), longitude: Number(match[2]) } : null }
+async function expandedLocationUrl(locationUrl?: string) { if (!locationUrl || !/maps\.app\.goo\.gl/.test(locationUrl)) return locationUrl; const response = await fetch('/api/resolve-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) }); const data = await response.json() as { locationUrl?: string }; return data.locationUrl || locationUrl }
 function distanceKm(first: Coordinates, second: Coordinates) { const radians = (value: number) => value * Math.PI / 180; const deltaLatitude = radians(second.latitude - first.latitude); const deltaLongitude = radians(second.longitude - first.longitude); const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(deltaLongitude / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
 
 function AuthScreen() {
