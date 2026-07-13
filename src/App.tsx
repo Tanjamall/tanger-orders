@@ -83,7 +83,7 @@ function OrderApp({ session }: { session: Session | null }) {
     const { data: memberships } = await supabase.rpc('list_my_workspaces')
     setWorkspaces(memberships ?? [])
     setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
-    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at })))
+    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined })))
     setNotice('Live shared data is connected.')
   }
   useEffect(() => { void loadCloud() }, [session])
@@ -102,7 +102,7 @@ function OrderApp({ session }: { session: Session | null }) {
 
   const delivered = orders.filter((order) => order.status === 'Delivered')
   const profitOrders = delivered.filter((order) => {
-    const orderDate = dateKey(order.createdAt)
+    const orderDate = dateKey(order.deliveredAt || order.createdAt)
     return (!profitStart || orderDate >= profitStart) && (!profitEnd || orderDate <= profitEnd)
   })
   const profitTotals = useMemo(() => profitOrders.reduce((sum, order) => {
@@ -123,8 +123,10 @@ function OrderApp({ session }: { session: Session | null }) {
     return groups
   }, [])
   const changeStatus = async (id: string, status: Status) => {
-    setOrders((all) => all.map((order) => order.id === id ? { ...order, status } : order))
-    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status }).eq('id', id); if (error) setNotice(error.message) }
+    const currentOrder = orders.find((order) => order.id === id)
+    const deliveredAt = status === 'Delivered' ? currentOrder?.deliveredAt || new Date().toISOString() : undefined
+    setOrders((all) => all.map((order) => order.id === id ? { ...order, status, deliveredAt } : order))
+    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null }).eq('id', id); if (error) setNotice(error.message) }
   }
 
   async function addOrder(form: HTMLFormElement) {
@@ -132,14 +134,16 @@ function OrderApp({ session }: { session: Session | null }) {
     const product = products.find((item) => item.id === values.get('product'))
     if (!product) return
     const quantity = Number(values.get('quantity')) || 1
+    const status = values.get('status') as Status || 'New'
+    const createdAt = new Date().toISOString()
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: String(values.get('phone') || ''), address: String(values.get('address') || ''),
-      items: [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }], status: values.get('status') as Status || 'New', paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
-      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt: new Date().toISOString(), locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
+      items: [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }], status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
+      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
     setOrders((all) => [order, ...all])
     if (supabase && workspaceId) {
-      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes })
+      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null })
       if (error) setNotice(error.message)
     }
     setShowOrder(false); setNotice('Order added. Connect Supabase to share it with your partner.')
@@ -158,9 +162,10 @@ function OrderApp({ session }: { session: Session | null }) {
     const values = new FormData(form)
     const product = products.find((item) => item.id === values.get('product'))
     const quantity = Number(values.get('quantity')) || 1
-    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items, assignedTo: String(values.get('assignedTo')), status: values.get('status') as Status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || '') }
+    const status = values.get('status') as Status
+    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined }
     setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
-    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes }).eq('id', updated.id); if (error) setNotice(error.message) }
+    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null }).eq('id', updated.id); if (error) setNotice(error.message) }
     setEditingOrder(null)
   }
 
@@ -271,7 +276,7 @@ function OrderApp({ session }: { session: Session | null }) {
       <section className="date-filter" aria-label="Choose profit date range"><div><label>From<input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></label><label>To<input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></label></div><div className="date-quick-actions"><button onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div></section>
       <section className="hero-profit"><p>NET PROFIT</p><strong>{money(profitTotals.profit)}</strong><span>From {profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</span></section>
       <div className="metric-grid"><Metric label="Sales" value={money(profitTotals.revenue)} /><Metric label="Orders" value={String(profitOrders.length)} /><Metric label="Average profit" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></div>
-      <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
+      <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
     </section>}
 
     {tab === 'map' && <section className="map-page"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}

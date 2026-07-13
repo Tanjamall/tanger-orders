@@ -25,5 +25,6 @@ export type Order = {
   deliveryCharge: number
   otherExpense: number
   createdAt: string
+  deliveredAt?: string
   notes?: string
 }
