@@ -61,22 +61,28 @@ export const onRequestPost: PagesFunction = async ({ request }) => {
   const page = safelyDecode(rawPage)
   const coordinatePatterns = [
     /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
-    /[?&](?:q|query|ll|center|destination|origin)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /[?&](?:q|query|ll|destination|origin)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
     /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
     /!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/,
     /\/place\/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
   ]
-  let coordinates: { latitude: number; longitude: number } | undefined
-  for (const pattern of coordinatePatterns) {
-    const match = page.match(pattern) || safelyDecode(expandedUrl).match(pattern) || response.url.match(pattern)
-    if (!match) continue
-    const first = Number(match[1]); const second = Number(match[2])
-    const [latitude, longitude] = pattern.source.startsWith('!2d') ? [second, first] : [first, second]
-    if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) { coordinates = { latitude, longitude }; break }
+  const coordinatesFrom = (source: string) => {
+    for (const pattern of coordinatePatterns) {
+      const match = source.match(pattern)
+      if (!match) continue
+      const first = Number(match[1]); const second = Number(match[2])
+      const [latitude, longitude] = pattern.source.startsWith('!2d') ? [second, first] : [first, second]
+      if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) return { latitude, longitude }
+    }
+    return undefined
   }
+  const expandedLocation = safelyDecode(expandedUrl)
+  let coordinates = coordinatesFrom(expandedLocation)
   if (!coordinates) {
-    const plusCode = `${page} ${safelyDecode(expandedUrl)} ${safelyDecode(response.url)}`.match(/([23456789CFGHJMPQRVWX]{2,7}\+[23456789CFGHJMPQRVWX]{2,})/i)?.[1]?.toUpperCase()
+    const plusCode = `${expandedLocation} ${safelyDecode(response.url)} ${page}`.match(/([23456789CFGHJMPQRVWX]{2,7}\+[23456789CFGHJMPQRVWX]{2,})/i)?.[1]?.toUpperCase()
     if (plusCode) coordinates = decodeShortPlusCode(plusCode)
   }
+  if (!coordinates) coordinates = coordinatesFrom(safelyDecode(response.url))
+  if (!coordinates) coordinates = coordinatesFrom(page)
   return Response.json({ locationUrl: expandedUrl, coordinates }, { headers })
 }

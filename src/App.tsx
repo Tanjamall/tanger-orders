@@ -306,7 +306,7 @@ function mapCoordinates(locationUrl?: string): Coordinates | null {
   const source = decodeURIComponent(locationUrl)
   const patterns: { expression: RegExp; reverse?: boolean }[] = [
     { expression: /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
-    { expression: /[?&](?:q|query|ll|center|destination|origin)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
+    { expression: /[?&](?:q|query|ll|destination|origin)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
     { expression: /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/ },
     { expression: /!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/, reverse: true },
     { expression: /\/place\/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
@@ -321,7 +321,7 @@ function mapCoordinates(locationUrl?: string): Coordinates | null {
   return null
 }
 type LocationResolution = { locationUrl?: string; coordinates?: Coordinates }
-function locationCacheKey(locationUrl: string) { return `tanger-location:${locationUrl}` }
+function locationCacheKey(locationUrl: string) { return `tanger-location:v2:${locationUrl}` }
 async function resolveLocation(locationUrl?: string): Promise<LocationResolution> {
   const directCoordinates = mapCoordinates(locationUrl)
   if (!locationUrl || directCoordinates) return { locationUrl, coordinates: directCoordinates ?? undefined }
