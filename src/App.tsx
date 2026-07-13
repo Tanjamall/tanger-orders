@@ -238,8 +238,7 @@ function OrderApp({ session }: { session: Session | null }) {
   }
 
   return <main className="app-shell">
-    <header className="topbar">
-      <div><p className="eyebrow">LOCAL DELIVERY · TANGER</p><h1>Tanger Orders</h1></div>
+    <header className="topbar minimal-topbar">
       <button className="avatar" title="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(!showAccountMenu)}>S</button>
     </header>
 
@@ -275,7 +274,7 @@ function OrderApp({ session }: { session: Session | null }) {
       <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
     </section>}
 
-    {tab === 'map' && <section className="page map-page"><div className="page-heading"><div><h2>Delivery map</h2><p>Orders with a Google Maps location</p></div></div><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}
+    {tab === 'map' && <section className="map-page"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}
 
     <nav className="bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
 
