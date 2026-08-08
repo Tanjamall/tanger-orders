@@ -107,6 +107,7 @@ function OrderApp({ session }: { session: Session | null }) {
     return () => { void client.removeChannel(channel) }
   }, [workspaceId])
 
+  const confirmationCost = (order: Order) => order.confirmationEmployeeId ? order.confirmationBonus ?? confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId)?.bonus ?? 0 : 0
   const delivered = orders.filter((order) => order.status === 'Delivered')
   const profitOrders = delivered.filter((order) => {
     const orderDate = dateKey(order.deliveredAt || order.createdAt)
@@ -118,8 +119,9 @@ function OrderApp({ session }: { session: Session | null }) {
       const product = products.find((candidate) => candidate.id === item.productId)
       return value + (product ? productCost(product, products) * item.quantity : 0)
     }, 0) + order.deliveryCharge + order.otherExpense
-    return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs }
-  }, { revenue: 0, profit: 0 }), [profitOrders, products])
+    const confirmationBonus = confirmationCost(order)
+    return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs - confirmationBonus, confirmationBonuses: sum.confirmationBonuses + confirmationBonus }
+  }, { revenue: 0, profit: 0, confirmationBonuses: 0 }), [profitOrders, products, confirmationEmployees])
   const confirmationPerformance = confirmationEmployees.map((employee) => {
     const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt && (!profitStart || dateKey(order.confirmedAt) >= profitStart) && (!profitEnd || dateKey(order.confirmedAt) <= profitEnd))
     return { employee, count: confirmations.length, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? employee.bonus), 0) }
@@ -339,8 +341,8 @@ function OrderApp({ session }: { session: Session | null }) {
       <div className="page-heading"><div><h2>Profit</h2><p>Delivered orders only</p></div></div>
       <section className="date-filter" aria-label="Choose profit date range"><div><label>From<input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></label><label>To<input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></label></div><div className="date-quick-actions"><button onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div></section>
       <section className="hero-profit"><p>NET PROFIT</p><strong>{money(profitTotals.profit)}</strong><span>From {profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</span></section>
-      <div className="metric-grid"><Metric label="Sales" value={money(profitTotals.revenue)} /><Metric label="Orders" value={String(profitOrders.length)} /><Metric label="Average profit" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></div>
-      <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
+      <div className="metric-grid profit-metrics"><Metric label="Sales" value={money(profitTotals.revenue)} /><Metric label="Orders" value={String(profitOrders.length)} /><Metric label="Team bonuses" value={`-${money(profitTotals.confirmationBonuses)}`} /><Metric label="Average net" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></div>
+      <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p>{bonus > 0 && <small>Confirmation: {confirmer?.name || 'Employee'} · -{money(bonus)}</small>}</div><div className="profit-order-values"><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong><span>Sale total</span></div></article> })}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
     </section>}
 
 
