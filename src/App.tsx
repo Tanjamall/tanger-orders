@@ -40,7 +40,7 @@ export default function App() {
 }
 
 function OrderApp({ session }: { session: Session | null }) {
-  const [tab, setTab] = useState<'orders' | 'inventory' | 'profit' | 'map'>('orders')
+  const [tab, setTab] = useState<'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings'>('orders')
   const [orders, setOrders] = useState<Order[]>(() => JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders)
   const [products, setProducts] = useState<Product[]>(() => JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
   const [query, setQuery] = useState('')
@@ -64,6 +64,7 @@ function OrderApp({ session }: { session: Session | null }) {
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
   const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>([])
   const [showConfirmationTeam, setShowConfirmationTeam] = useState(false)
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
 
@@ -123,6 +124,12 @@ function OrderApp({ session }: { session: Session | null }) {
     const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt && (!profitStart || dateKey(order.confirmedAt) >= profitStart) && (!profitEnd || dateKey(order.confirmedAt) <= profitEnd))
     return { employee, count: confirmations.length, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? employee.bonus), 0) }
   }).filter(({ employee, count }) => employee.active || count > 0)
+  const employeeSummaries = confirmationEmployees.map((employee) => {
+    const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt)
+    return { employee, count: confirmations.length, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? employee.bonus), 0) }
+  }).filter(({ employee, count }) => employee.active || count > 0)
+  const selectedEmployee = confirmationEmployees.find((employee) => employee.id === selectedEmployeeId)
+  const selectedEmployeeOrders = selectedEmployee ? orders.filter((order) => order.confirmationEmployeeId === selectedEmployee.id && order.confirmedAt).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
 
   const visibleOrders = orders
     .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
@@ -299,7 +306,7 @@ function OrderApp({ session }: { session: Session | null }) {
 
   return <main className="app-shell">
     <header className="topbar minimal-topbar">
-      <button className="avatar" title="Account menu" aria-expanded={showAccountMenu} onClick={() => setShowAccountMenu(!showAccountMenu)}>S</button>
+      <button className="avatar" title="Settings" aria-label="Open settings" onClick={() => { setSelectedEmployeeId(null); setTab('settings') }}>S</button>
     </header>
 
     {showAccountMenu && <section className="account-menu">
@@ -335,11 +342,30 @@ function OrderApp({ session }: { session: Session | null }) {
       <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
     </section>}
 
-      {tab === 'profit' && <section className="page confirmation-summary-page"><h3 className="section-title">Confirmation performance</h3><div className="confirmation-performance">{confirmationPerformance.map(({ employee, count, bonus }) => <article key={employee.id}><div><b>{employee.name}</b><p>{count} {count === 1 ? 'confirmed order' : 'confirmed orders'}{!employee.active && ' · Inactive'}</p></div><strong>{money(bonus)}</strong></article>)}{!confirmationPerformance.length && <p className="empty-date-range">No confirmation employees added yet.</p>}</div></section>}
+
+    {tab === 'employees' && <section className="page employees-page">
+      {selectedEmployee ? <>
+        <button className="back-button" onClick={() => setSelectedEmployeeId(null)}>← All employees</button>
+        <div className="page-heading"><div><h2>{selectedEmployee.name}</h2><p>{selectedEmployee.active ? 'Active confirmation employee' : 'Inactive confirmation employee'}</p></div></div>
+        <section className="employee-detail-total"><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? selectedEmployee.bonus), 0))}</strong><small>{selectedEmployeeOrders.length} confirmed {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section>
+        <h3 className="section-title">Confirmation history</h3>
+        <div className="employee-history">{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{order.phone} · {dateStamp(dateKey(order.confirmedAt || order.createdAt))}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? selectedEmployee.bonus)}</strong></article>)}{!selectedEmployeeOrders.length && <p className="empty-date-range">No confirmations recorded yet.</p>}</div>
+      </> : <>
+        <div className="page-heading"><div><h2>Employees</h2><p>Confirmation work and bonuses</p></div></div>
+        <div className="employee-summary-list">{employeeSummaries.map(({ employee, count, bonus }) => <button className="employee-summary-card" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-initial">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-summary-copy"><b>{employee.name}</b><small>{count} {count === 1 ? 'confirmed order' : 'confirmed orders'}{!employee.active && ' · Inactive'}</small></span><span className="employee-summary-bonus"><small>Bonuses</small><strong>{money(bonus)}</strong></span><span className="employee-chevron">›</span></button>)}{!employeeSummaries.length && <section className="employee-empty"><b>No employees yet</b><p>Add confirmation employees from Settings, then assign them to orders.</p><button className="primary" onClick={() => setTab('settings')}>Open settings</button></section>}</div>
+      </>}
+    </section>}
+
+    {tab === 'settings' && <section className="page settings-page">
+      <div className="page-heading"><div><h2>Settings</h2><p>Workspaces, team, and app controls</p></div></div>
+      <section className="settings-block"><div className="settings-block-head"><div><h3>Shared workspace</h3><p>Use this code to invite a partner.</p></div><strong className="settings-code">{workspaceCode ?? 'Loading…'}</strong></div><div className="workspace-list">{workspaces.map((workspace) => <div className={`workspace-row ${workspace.id === workspaceId ? 'current-workspace' : ''}`} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}>{workspace.name}{workspace.id === workspaceId && ' · Current'}</button>{workspace.is_owner && <button className="row-delete" aria-label={`Delete ${workspace.name}`} title="Delete workspace" onClick={() => void deleteWorkspace(workspace.id, workspace.name)}>×</button>}</div>)}</div><div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>+ Create workspace</button><button onClick={() => void manageWorkspace('join')}>↗ Join workspace</button></div></section>
+      <section className="settings-block"><div className="settings-block-head"><div><h3>Confirmation team</h3><p>Admins can confirm orders with no bonus.</p></div></div><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form settings-add-employee"><input required name="name" placeholder="Employee name" /><input required name="bonus" type="number" min="0" step="1" defaultValue="5" placeholder="Bonus (DH)" /><button className="primary">Add</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></section>
+      <section className="settings-block settings-actions"><button onClick={() => void loadCloud()}>Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}>Sign out</button></section>
+    </section>}
 
     {tab === 'map' && <section className="map-page"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}
 
-    <nav className="bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
+    <nav className="bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
 
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
@@ -378,8 +404,8 @@ function OrderCard({ order, products, members, confirmationEmployees, onStatus, 
   return <article className="order-card compact-order"><div className="compact-order-head"><div className="client-block"><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank">{order.phone} →</a></div><div className="order-head-actions">{order.locationUrl?.trim() && <a className="map-order" href={navigationUrl(order)} target="_blank" rel="noreferrer" title="Open in Google Maps">⌖</a>}<button className="edit-order" title="Edit order" onClick={() => onEdit(order)}>✎</button><select className={`status-picker ${order.status.toLowerCase().replaceAll(' ', '-')}`} aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div></div><p className="compact-items">{lines}</p><p className="compact-address">⌖ {order.address}</p>{order.notes?.trim() && <p className="compact-notes">Note: {order.notes}</p>}{confirmer && <p className="compact-confirmation">Confirmed by {confirmer.name} · {money(order.confirmationBonus ?? confirmer.bonus)}</p>}<div className="compact-meta"><span>◉ {assignee}</span><span>{order.paymentStatus}</span><b>{money(total)}</b></div></article>
 }
 
-function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'map'; label: string; active: boolean; onClick: () => void }) { return <button className={active ? 'nav-active' : ''} onClick={onClick}><NavIcon name={icon} />{label}</button> }
-function NavIcon({ name }: { name: 'orders' | 'inventory' | 'profit' | 'map' }) { const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }; return <svg viewBox="0 0 24 24" aria-hidden="true">{name === 'orders' && <><rect x="4" y="3.5" width="16" height="17" rx="2.5" {...common} /><path d="M8 8h8M8 12h8M8 16h5" {...common} /></>}{name === 'inventory' && <><path d="M4 8.5 12 4l8 4.5v8L12 21l-8-4.5z" {...common} /><path d="M4 8.5 12 13l8-4.5M12 13v8" {...common} /></>}{name === 'profit' && <><path d="M4 19.5V13m5 6.5V9m5 10.5V5m5 14.5v-8" {...common} /><path d="m4 9 5-3 5 2 6-4" {...common} /></>}{name === 'map' && <><path d="m3.5 6 6-2.5 5 2.5 6-2.5v14l-6 2.5-5-2.5-6 2.5z" {...common} /><path d="M9.5 3.5v14m5-11.5v14" {...common} /></>}</svg> }
+function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) { return <button className={active ? 'nav-active' : ''} onClick={onClick}><NavIcon name={icon} />{label}</button> }
+function NavIcon({ name }: { name: 'orders' | 'inventory' | 'profit' | 'employees' | 'map' }) { const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }; return <svg viewBox="0 0 24 24" aria-hidden="true">{name === 'orders' && <><rect x="4" y="3.5" width="16" height="17" rx="2.5" {...common} /><path d="M8 8h8M8 12h8M8 16h5" {...common} /></>}{name === 'inventory' && <><path d="M4 8.5 12 4l8 4.5v8L12 21l-8-4.5z" {...common} /><path d="M4 8.5 12 13l8-4.5M12 13v8" {...common} /></>}{name === 'profit' && <><path d="M4 19.5V13m5 6.5V9m5 10.5V5m5 14.5v-8" {...common} /><path d="m4 9 5-3 5 2 6-4" {...common} /></>}{name === 'employees' && <><circle cx="9" cy="8" r="3" {...common} /><path d="M3.8 19c.8-3.2 2.5-4.8 5.2-4.8s4.4 1.6 5.2 4.8M16 8.5h4m-2-2v4" {...common} /></>}{name === 'map' && <><path d="m3.5 6 6-2.5 5 2.5 6-2.5v14l-6 2.5-5-2.5-6 2.5z" {...common} /><path d="M9.5 3.5v14m5-11.5v14" {...common} /></>}</svg> }
 function Metric({ label, value }: { label: string; value: string }) { return <article className="metric"><p>{label}</p><strong>{value}</strong></article> }
 function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</section></div> }
 function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
