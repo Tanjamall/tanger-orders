@@ -8,8 +8,10 @@ import type { Order, PaymentStatus, Product, Status } from './types'
 
 const statuses: Status[] = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
 const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
+type ConfirmationEmployee = { id: string; name: string; bonus: number; active: boolean }
 const money = (value: number) => `${Math.round(value)} DH`
 const uid = () => crypto.randomUUID()
+const isConfirmedOrder = (status: Status) => ['Confirmed', 'Preparing', 'Out for delivery', 'Delivered'].includes(status)
 const dateKey = (value: Date | string) => { const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 const monthStartKey = () => { const today = new Date(); return dateKey(new Date(today.getFullYear(), today.getMonth(), 1)) }
 const dateStamp = (key: string) => { const [year, month, day] = key.split('-'); return `${day}/${month}/${year}` }
@@ -60,6 +62,8 @@ function OrderApp({ session }: { session: Session | null }) {
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>([])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
+  const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>([])
+  const [showConfirmationTeam, setShowConfirmationTeam] = useState(false)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
 
@@ -72,18 +76,20 @@ function OrderApp({ session }: { session: Session | null }) {
     if (error) { setNotice(`Database setup needed: ${error.message}`); return }
     if (!profile.workspace_id) { setWorkspaceId(null); return }
     setWorkspaceId(profile.workspace_id)
-    const [workspace, productRows, orderRows, profileRows] = await Promise.all([
+    const [workspace, productRows, orderRows, profileRows, employeeRows] = await Promise.all([
       supabase.from('workspaces').select('join_code').eq('id', profile.workspace_id).single(),
       supabase.from('products').select('*').order('created_at'),
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('id, display_name'),
+      supabase.from('confirmation_employees').select('*').order('created_at'),
     ])
-    if (productRows.error || orderRows.error) { setNotice(`Could not load shared data: ${(productRows.error || orderRows.error)?.message}`); return }
+    if (productRows.error || orderRows.error || employeeRows.error) { setNotice(`Could not load shared data: ${(productRows.error || orderRows.error || employeeRows.error)?.message}`); return }
     setWorkspaceCode(workspace.data?.join_code ?? null); setMembers(profileRows.data ?? [])
     const { data: memberships } = await supabase.rpc('list_my_workspaces')
     setWorkspaces(memberships ?? [])
     setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
-    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined })))
+    setConfirmationEmployees(employeeRows.data.map((row: any) => ({ id: row.id, name: row.name, bonus: Number(row.bonus_per_confirmation), active: row.active })))
+    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, confirmationEmployeeId: row.confirmation_employee_id ?? undefined, confirmationBonus: Number(row.confirmation_bonus ?? 0), confirmedAt: row.confirmed_at ?? undefined })))
     setNotice('Live shared data is connected.')
   }
   useEffect(() => { void loadCloud() }, [session])
@@ -96,7 +102,7 @@ function OrderApp({ session }: { session: Session | null }) {
   useEffect(() => {
     if (!supabase || !workspaceId) return
     const client = supabase
-    const channel = client.channel(`tanger-orders-${workspaceId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadCloud).subscribe()
+    const channel = client.channel(`tanger-orders-${workspaceId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'confirmation_employees' }, loadCloud).subscribe()
     return () => { void client.removeChannel(channel) }
   }, [workspaceId])
 
@@ -113,6 +119,10 @@ function OrderApp({ session }: { session: Session | null }) {
     }, 0) + order.deliveryCharge + order.otherExpense
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs }
   }, { revenue: 0, profit: 0 }), [profitOrders, products])
+  const confirmationPerformance = confirmationEmployees.map((employee) => {
+    const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt && (!profitStart || dateKey(order.confirmedAt) >= profitStart) && (!profitEnd || dateKey(order.confirmedAt) <= profitEnd))
+    return { employee, count: confirmations.length, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? employee.bonus), 0) }
+  }).filter(({ employee, count }) => employee.active || count > 0)
 
   const visibleOrders = orders
     .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
@@ -125,8 +135,11 @@ function OrderApp({ session }: { session: Session | null }) {
   const changeStatus = async (id: string, status: Status) => {
     const currentOrder = orders.find((order) => order.id === id)
     const deliveredAt = status === 'Delivered' ? currentOrder?.deliveredAt || new Date().toISOString() : undefined
-    setOrders((all) => all.map((order) => order.id === id ? { ...order, status, deliveredAt } : order))
-    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null }).eq('id', id); if (error) setNotice(error.message) }
+    const confirmedAt = currentOrder?.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
+    const employee = confirmationEmployees.find((item) => item.id === currentOrder?.confirmationEmployeeId)
+    const confirmationBonus = currentOrder?.confirmationBonus ?? (employee?.bonus || 0)
+    setOrders((all) => all.map((order) => order.id === id ? { ...order, status, deliveredAt, confirmedAt, confirmationBonus } : order))
+    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null, confirmed_at: confirmedAt ?? null, confirmation_bonus: confirmationBonus }).eq('id', id); if (error) setNotice(error.message) }
   }
 
   async function addOrder(form: HTMLFormElement) {
@@ -136,14 +149,16 @@ function OrderApp({ session }: { session: Session | null }) {
     const quantity = Number(values.get('quantity')) || 1
     const status = values.get('status') as Status || 'New'
     const createdAt = new Date().toISOString()
+    const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
+    const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: String(values.get('phone') || ''), address: String(values.get('address') || ''),
       items: [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }], status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
-      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
+      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: confirmationEmployee?.bonus || 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
     setOrders((all) => [order, ...all])
     if (supabase && workspaceId) {
-      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null })
+      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null, confirmation_employee_id: order.confirmationEmployeeId ?? null, confirmation_bonus: order.confirmationBonus ?? 0, confirmed_at: order.confirmedAt ?? null })
       if (error) setNotice(error.message)
     }
     setShowOrder(false); setNotice('Order added. Connect Supabase to share it with your partner.')
@@ -163,9 +178,14 @@ function OrderApp({ session }: { session: Session | null }) {
     const product = products.find((item) => item.id === values.get('product'))
     const quantity = Number(values.get('quantity')) || 1
     const status = values.get('status') as Status
-    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined }
+    const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
+    const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
+    const isSameConfirmer = confirmationEmployeeId === editingOrder.confirmationEmployeeId
+    const confirmedAt = editingOrder.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
+    const confirmationBonus = confirmationEmployeeId ? (isSameConfirmer && editingOrder.confirmedAt ? editingOrder.confirmationBonus ?? confirmationEmployee?.bonus ?? 0 : confirmationEmployee?.bonus ?? 0) : 0
+    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
     setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
-    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null }).eq('id', updated.id); if (error) setNotice(error.message) }
+    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id); if (error) setNotice(error.message) }
     setEditingOrder(null)
   }
 
@@ -221,6 +241,41 @@ function OrderApp({ session }: { session: Session | null }) {
     setShowAccountMenu(false); await loadCloud()
   }
 
+  async function addConfirmationEmployee(form: HTMLFormElement) {
+    const values = new FormData(form)
+    const name = String(values.get('name') || '').trim()
+    const bonus = Number(values.get('bonus'))
+    if (!name) return
+    if (!supabase) {
+      setConfirmationEmployees((all) => [...all, { id: uid(), name, bonus: Number.isFinite(bonus) ? Math.max(0, bonus) : 5, active: true }])
+      form.reset()
+      return
+    }
+    const { error } = await supabase.rpc('create_confirmation_employee', { employee_name: name, employee_bonus: Number.isFinite(bonus) ? Math.max(0, bonus) : 5 })
+    if (error) { setNotice(error.message); return }
+    form.reset(); await loadCloud()
+  }
+
+  async function editConfirmationEmployee(employee: ConfirmationEmployee) {
+    const name = window.prompt('Employee name', employee.name)?.trim()
+    if (!name) return
+    const bonusValue = window.prompt('Bonus for each confirmed order (DH)', String(employee.bonus))
+    if (bonusValue === null) return
+    const bonus = Number(bonusValue)
+    if (!Number.isFinite(bonus) || bonus < 0) { setNotice('Enter a valid bonus amount.'); return }
+    if (!supabase) { setConfirmationEmployees((all) => all.map((item) => item.id === employee.id ? { ...item, name, bonus } : item)); return }
+    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: name, employee_bonus: bonus, employee_active: employee.active })
+    if (error) { setNotice(error.message); return }
+    await loadCloud()
+  }
+
+  async function toggleConfirmationEmployee(employee: ConfirmationEmployee) {
+    if (!supabase) { setConfirmationEmployees((all) => all.map((item) => item.id === employee.id ? { ...item, active: !item.active } : item)); return }
+    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: employee.name, employee_bonus: employee.bonus, employee_active: !employee.active })
+    if (error) { setNotice(error.message); return }
+    await loadCloud()
+  }
+
   async function planRoute() {
     const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status) && Boolean(order.locationUrl?.trim()))
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
@@ -255,6 +310,7 @@ function OrderApp({ session }: { session: Session | null }) {
       <div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>＋ Create</button><button onClick={() => void manageWorkspace('join')}>↗ Join</button></div>
       <button onClick={() => void loadCloud()}>↻ Refresh shared orders</button>
       <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>↪ Sign out</button>
+      <button onClick={() => { setShowAccountMenu(false); setShowConfirmationTeam(true) }}>Confirmation team</button>
     </section>}
 
     {supabase && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
@@ -262,7 +318,7 @@ function OrderApp({ session }: { session: Session | null }) {
       <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className="route-button" onClick={() => void planRoute()}>Route</button><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
       {showSearch && <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>}
       <div className="status-scroll" aria-label="Filter orders by status"><button className={`status filter-chip ${statusFilter === 'All' ? 'selected' : ''}`} onClick={() => setStatusFilter('All')}>All <b>{orders.length}</b></button>{statuses.map((status) => <button className={`status filter-chip ${status.toLowerCase().replaceAll(' ', '-')} ${statusFilter === status ? 'selected' : ''}`} key={status} onClick={() => setStatusFilter(status)}>{status} <b>{orders.filter(o => o.status === status).length}</b></button>)}</div>
-      <div className="order-list">{ordersByDate.map((group) => <section className="order-day" key={group.key}><h3>{dateHeading(group.key)}</h3>{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} onStatus={changeStatus} onEdit={setEditingOrder} />)}</section>)}</div>
+      <div className="order-list">{ordersByDate.map((group) => <section className="order-day" key={group.key}><h3>{dateHeading(group.key)}</h3>{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}</section>)}</div>
     </section>}
 
     {tab === 'inventory' && <section className="page">
@@ -279,12 +335,15 @@ function OrderApp({ session }: { session: Session | null }) {
       <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map(order => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p></div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article>)}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
     </section>}
 
+      {tab === 'profit' && <section className="page confirmation-summary-page"><h3 className="section-title">Confirmation performance</h3><div className="confirmation-performance">{confirmationPerformance.map(({ employee, count, bonus }) => <article key={employee.id}><div><b>{employee.name}</b><p>{count} {count === 1 ? 'confirmed order' : 'confirmed orders'}{!employee.active && ' · Inactive'}</p></div><strong>{money(bonus)}</strong></article>)}{!confirmationPerformance.length && <p className="empty-date-range">No confirmation employees added yet.</p>}</div></section>}
+
     {tab === 'map' && <section className="map-page"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}
 
     <nav className="bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
 
-    {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><form onSubmit={(event) => { event.preventDefault(); void addOrder(event.currentTarget) }} className="form"><input required name="client" placeholder="Client name" /><input required name="phone" placeholder="WhatsApp number" /><input required name="address" placeholder="Address (Arabic or English)" /><input name="locationUrl" type="url" placeholder="Google Maps location link (optional)" /><select name="product">{products.map(p => <option value={p.id} key={p.id}>{p.components ? '◇ ' : ''}{p.name} — {money(p.price)}</option>)}</select><div className="form-row"><input name="quantity" type="number" min="1" defaultValue="1" placeholder="Qty" /><input name="price" type="number" placeholder="Custom price" /></div><div className="form-row"><select name="assignedTo">{(members.length ? members.map(m => ({ value: m.id, label: m.display_name || 'Team member' })) : people.map(p => ({ value: p, label: p }))).map(person => <option value={person.value} key={person.value}>{person.label}</option>)}</select><input name="deliveryCharge" type="number" placeholder="Delivery expense" /></div><div className="form-row"><select name="status" defaultValue="New">{statuses.map(status => <option key={status}>{status}</option>)}</select><select name="paymentStatus" defaultValue="Pay on delivery">{paymentStatuses.map(status => <option key={status}>{status}</option>)}</select></div><input name="otherExpense" type="number" placeholder="Other expense" /><textarea name="notes" placeholder="Notes (optional)" /><button className="primary full">Save order</button></form></Modal>}
-    {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><form onSubmit={(event) => { event.preventDefault(); void updateOrder(event.currentTarget) }} className="form"><input required name="client" defaultValue={editingOrder.client} placeholder="Client name" /><input required name="phone" defaultValue={editingOrder.phone} placeholder="WhatsApp number" /><input required name="address" defaultValue={editingOrder.address} placeholder="Address (Arabic or English)" /><input name="locationUrl" type="url" defaultValue={editingOrder.locationUrl} placeholder="Google Maps location link (optional)" /><select name="product" defaultValue={editingOrder.items[0]?.productId}>{products.map(p => <option value={p.id} key={p.id}>{p.components ? '◇ ' : ''}{p.name} — {money(p.price)}</option>)}</select><div className="form-row"><input name="quantity" type="number" min="1" defaultValue={editingOrder.items[0]?.quantity || 1} placeholder="Qty" /><input name="price" type="number" defaultValue={editingOrder.items[0]?.unitPrice} placeholder="Custom price" /></div><div className="form-row"><select name="assignedTo" defaultValue={editingOrder.assignedTo}>{(members.length ? members.map(m => ({ value: m.id, label: m.display_name || 'Team member' })) : people.map(p => ({ value: p, label: p }))).map(person => <option value={person.value} key={person.value}>{person.label}</option>)}</select><input name="deliveryCharge" type="number" defaultValue={editingOrder.deliveryCharge} placeholder="Delivery expense" /></div><div className="form-row"><select name="status" defaultValue={editingOrder.status}>{statuses.map(status => <option key={status}>{status}</option>)}</select><select name="paymentStatus" defaultValue={editingOrder.paymentStatus}>{paymentStatuses.map(status => <option key={status}>{status}</option>)}</select></div><input name="otherExpense" type="number" defaultValue={editingOrder.otherExpense} placeholder="Other expense" /><textarea name="notes" defaultValue={editingOrder.notes} placeholder="Notes (optional)" /><button className="primary full">Save changes</button></form></Modal>}
+    {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
+    {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
+    {showConfirmationTeam && <Modal title="Confirmation team" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Add your confirmation staff here. Admin confirmations are always recorded with no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><input required name="name" placeholder="Employee name" /><input required name="bonus" type="number" min="0" step="1" defaultValue="5" placeholder="Bonus per confirmed order (DH)" /><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><input required name="name" placeholder="Product name" /><div className="form-row"><input required name="cost" type="number" placeholder="Buying cost" /><input required name="price" type="number" placeholder="Selling price" /></div><div className="form-row"><input required name="stock" type="number" placeholder="Opening stock" /><input name="lowStockAt" type="number" defaultValue="3" placeholder="Low-stock warning" /></div><button className="primary full">Save product</button></form></Modal>}
     {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><input required name="name" defaultValue={editingProduct.name} placeholder="Name" /><div className="form-row"><input name="cost" type="number" defaultValue={editingProduct.components ? productCost(editingProduct, products) : editingProduct.cost} placeholder="Cost" disabled={Boolean(editingProduct.components)} /><input required name="price" type="number" defaultValue={editingProduct.price} placeholder="Selling price" /></div>{!editingProduct.components && <div className="form-row"><input name="stock" type="number" defaultValue={editingProduct.stock} placeholder="Stock" /><input name="lowStockAt" type="number" defaultValue={editingProduct.lowStockAt} placeholder="Low-stock warning" /></div>}<button className="primary full">Save changes</button></form></Modal>}
     {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><input required name="name" placeholder="Bundle name" /><input required name="price" type="number" placeholder="Bundle selling price" /><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select><input type="number" min="1" value={line.quantity} aria-label="Quantity" onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} />{bundleLines.length > 2 && <button className="remove-line" type="button" onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}>×</button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}>+ Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
@@ -293,11 +352,30 @@ function OrderApp({ session }: { session: Session | null }) {
   </main>
 }
 
-function OrderCard({ order, products, members, onStatus, onEdit }: { order: Order; products: Product[]; members: { id: string; display_name: string | null }[]; onStatus: (id: string, status: Status) => void; onEdit: (order: Order) => void }) {
+function OrderForm({ order, products, members, confirmationEmployees, onSubmit, submitLabel = 'Save order' }: { order?: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onSubmit: (form: HTMLFormElement) => Promise<void>; submitLabel?: string }) {
+  const assignees = members.length ? members.map((member) => ({ value: member.id, label: member.display_name || 'Team member' })) : people.map((person) => ({ value: person, label: person }))
+  return <form onSubmit={(event) => { event.preventDefault(); void onSubmit(event.currentTarget) }} className="form">
+    <input required name="client" defaultValue={order?.client} placeholder="Client name" />
+    <input required name="phone" defaultValue={order?.phone} placeholder="WhatsApp number" />
+    <input required name="address" defaultValue={order?.address} placeholder="Address (Arabic or English)" />
+    <input name="locationUrl" type="url" defaultValue={order?.locationUrl} placeholder="Google Maps location link (optional)" />
+    <select name="product" defaultValue={order?.items[0]?.productId}>{products.map((product) => <option value={product.id} key={product.id}>{product.components ? 'Bundle: ' : ''}{product.name} — {money(product.price)}</option>)}</select>
+    <div className="form-row"><input name="quantity" type="number" min="1" defaultValue={order?.items[0]?.quantity || 1} placeholder="Qty" /><input name="price" type="number" defaultValue={order?.items[0]?.unitPrice} placeholder="Custom price" /></div>
+    <div className="form-row"><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select><input name="deliveryCharge" type="number" defaultValue={order?.deliveryCharge} placeholder="Delivery expense" /></div>
+    <div className="form-row"><select name="status" defaultValue={order?.status || 'New'}>{statuses.map((status) => <option key={status}>{status}</option>)}</select><select name="paymentStatus" defaultValue={order?.paymentStatus || 'Pay on delivery'}>{paymentStatuses.map((status) => <option key={status}>{status}</option>)}</select></div>
+    <select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Confirmed by admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per confirmation</option>)}</select>
+    <input name="otherExpense" type="number" defaultValue={order?.otherExpense} placeholder="Other expense" />
+    <textarea name="notes" defaultValue={order?.notes} placeholder="Internal notes (shown on the order card)" />
+    <button className="primary full">{submitLabel}</button>
+  </form>
+}
+
+function OrderCard({ order, products, members, confirmationEmployees, onStatus, onEdit }: { order: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onStatus: (id: string, status: Status) => void; onEdit: (order: Order) => void }) {
   const lines = order.items.map((item) => `${item.quantity}× ${products.find((p) => p.id === item.productId)?.name ?? 'Product'}`).join(', ')
   const assignee = members.find(member => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
   const total = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
-  return <article className="order-card compact-order"><div className="compact-order-head"><div className="client-block"><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank">{order.phone} ↗</a></div><div className="order-head-actions">{order.locationUrl?.trim() && <a className="map-order" href={navigationUrl(order)} target="_blank" rel="noreferrer" title="Open in Google Maps">⌖</a>}<button className="edit-order" title="Edit order" onClick={() => onEdit(order)}>✎</button><select className={`status-picker ${order.status.toLowerCase().replaceAll(' ', '-')}`} aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div></div><p className="compact-items">{lines}</p><p className="compact-address">⌖ {order.address}</p><div className="compact-meta"><span>◉ {assignee}</span><span>{order.paymentStatus}</span><b>{money(total)}</b></div></article>
+  const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId)
+  return <article className="order-card compact-order"><div className="compact-order-head"><div className="client-block"><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank">{order.phone} →</a></div><div className="order-head-actions">{order.locationUrl?.trim() && <a className="map-order" href={navigationUrl(order)} target="_blank" rel="noreferrer" title="Open in Google Maps">⌖</a>}<button className="edit-order" title="Edit order" onClick={() => onEdit(order)}>✎</button><select className={`status-picker ${order.status.toLowerCase().replaceAll(' ', '-')}`} aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div></div><p className="compact-items">{lines}</p><p className="compact-address">⌖ {order.address}</p>{order.notes?.trim() && <p className="compact-notes">Note: {order.notes}</p>}{confirmer && <p className="compact-confirmation">Confirmed by {confirmer.name} · {money(order.confirmationBonus ?? confirmer.bonus)}</p>}<div className="compact-meta"><span>◉ {assignee}</span><span>{order.paymentStatus}</span><b>{money(total)}</b></div></article>
 }
 
 function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'map'; label: string; active: boolean; onClick: () => void }) { return <button className={active ? 'nav-active' : ''} onClick={onClick}><NavIcon name={icon} />{label}</button> }

@@ -26,5 +26,8 @@ export type Order = {
   otherExpense: number
   createdAt: string
   deliveredAt?: string
+  confirmationEmployeeId?: string
+  confirmationBonus?: number
+  confirmedAt?: string
   notes?: string
 }
