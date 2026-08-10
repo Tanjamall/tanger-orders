@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowLeft,
@@ -7,6 +7,7 @@ import {
   Buildings,
   CalendarBlank,
   CaretDown,
+  CaretLeft,
   CaretRight,
   ChartBar,
   CheckCircle,
@@ -58,9 +59,23 @@ const uid = () => crypto.randomUUID()
 const isConfirmedOrder = (status: Status) => ['Confirmed', 'Preparing', 'Out for delivery', 'Delivered'].includes(status)
 const dateKey = (value: Date | string) => { const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 const monthStartKey = () => { const today = new Date(); return dateKey(new Date(today.getFullYear(), today.getMonth(), 1)) }
+const monthEndKey = (value = new Date()) => dateKey(new Date(value.getFullYear(), value.getMonth() + 1, 0))
 const dateStamp = (key: string) => { const [year, month, day] = key.split('-'); return `${day}/${month}/${year}` }
 const longDate = (key: string) => new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${key}T12:00:00`))
 const shortDate = (key: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${key}T12:00:00`))
+const monthLabel = (key: string) => new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(`${key}T12:00:00`))
+type DateRange = { start: string; end: string }
+const normalizedRange = (first: string, second: string): DateRange => first <= second ? { start: first, end: second } : { start: second, end: first }
+const rangeLabel = ({ start, end }: DateRange) => {
+  const startDate = new Date(`${start}T12:00:00`); const endDate = new Date(`${end}T12:00:00`)
+  if (start === end) return shortDate(start)
+  if (startDate.getFullYear() === endDate.getFullYear() && startDate.getMonth() === endDate.getMonth()) return `${startDate.getDate()}–${shortDate(end)}`
+  return `${shortDate(start)} – ${shortDate(end)}`
+}
+const isWholeMonth = ({ start, end }: DateRange) => {
+  const startDate = new Date(`${start}T12:00:00`)
+  return startDate.getDate() === 1 && end === monthEndKey(startDate)
+}
 
 function productCost(product: Product, all: Product[]): number {
   if (!product.components) return product.cost
@@ -99,7 +114,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     return requested && ['orders', 'inventory', 'profit', 'employees', 'map', 'settings'].includes(requested) ? requested as 'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings' : 'orders'
   })
   const [dark, setDark] = useState(() => localStorage.getItem('quiet-ledger-theme') === 'dark')
-  const [orderDate, setOrderDate] = useState(() => dateKey(new Date()))
+  const [orderRange, setOrderRange] = useState<DateRange>(() => ({ start: monthStartKey(), end: monthEndKey() }))
+  const [showOrderCalendar, setShowOrderCalendar] = useState(false)
   const [orders, setOrders] = useState<Order[]>(() => devDemo ? initialOrders : JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders)
   const [products, setProducts] = useState<Product[]>(() => devDemo ? initialProducts : JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
   const [query, setQuery] = useState('')
@@ -184,9 +200,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationBonus = confirmationCost(order)
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs - confirmationBonus, confirmationBonuses: sum.confirmationBonuses + confirmationBonus }
   }, { revenue: 0, profit: 0, confirmationBonuses: 0 }), [profitOrders, products, confirmationEmployees])
-  const selectedDayOrders = orders.filter((order) => dateKey(order.createdAt) === orderDate)
-  const selectedDayDelivered = orders.filter((order) => order.status === 'Delivered' && dateKey(order.deliveredAt || order.createdAt) === orderDate)
-  const selectedDayProfit = selectedDayDelivered.reduce((sum, order) => {
+  const selectedRangeOrders = orders.filter((order) => { const created = dateKey(order.createdAt); return created >= orderRange.start && created <= orderRange.end })
+  const selectedRangeDelivered = orders.filter((order) => { const deliveredAt = dateKey(order.deliveredAt || order.createdAt); return order.status === 'Delivered' && deliveredAt >= orderRange.start && deliveredAt <= orderRange.end })
+  const selectedRangeProfit = selectedRangeDelivered.reduce((sum, order) => {
     const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
     const costs = order.items.reduce((value, item) => {
       const product = products.find((candidate) => candidate.id === item.productId)
@@ -202,9 +218,16 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const selectedEmployee = confirmationEmployees.find((employee) => employee.id === selectedEmployeeId)
   const selectedEmployeeOrders = selectedEmployee ? orders.filter((order) => order.confirmationEmployeeId === selectedEmployee.id && order.confirmedAt).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
 
-  const visibleOrders = selectedDayOrders
+  const visibleOrders = selectedRangeOrders
     .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
     .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+  const orderGroups = visibleOrders.reduce<{ date: string; orders: Order[] }[]>((groups, order) => {
+    const day = dateKey(order.createdAt); const latest = groups[groups.length - 1]
+    if (latest?.date === day) latest.orders.push(order); else groups.push({ date: day, orders: [order] })
+    return groups
+  }, [])
+  const currentMonthRange = orderRange.start === monthStartKey() && orderRange.end === monthEndKey()
+  const orderRangeTitle = isWholeMonth(orderRange) ? monthLabel(orderRange.start) : rangeLabel(orderRange)
   const changeStatus = async (id: string, status: Status) => {
     const currentOrder = orders.find((order) => order.id === id)
     const deliveredAt = status === 'Delivered' ? currentOrder?.deliveredAt || new Date().toISOString() : undefined
@@ -374,11 +397,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {supabase && session && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
     {tab !== 'map' && <div className="ledger-scroll"><div className="ledger-content">
     {tab === 'orders' && <section className="page quiet-orders">
-      <PageHeader title="Orders" subtitle={longDate(orderDate)} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className={`square-action ${showSearch ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
-      <section className="profit-date-bar"><div><span>{orderDate === dateKey(new Date()) ? "Today's profit" : 'Selected profit'}</span><strong>{money(selectedDayProfit)}</strong><small><CheckCircle />{selectedDayDelivered.length} delivered</small></div><label className="date-control"><CalendarBlank /><span><b>{orderDate === dateKey(new Date()) ? 'Today' : 'Selected date'}</b><small>{shortDate(orderDate)}</small></span><CaretDown /><input type="date" value={orderDate} max={dateKey(new Date())} onChange={(event) => setOrderDate(event.target.value)} aria-label="Filter orders by date" /></label></section>
+      <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className={`square-action ${showSearch ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
+      <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
       <div className="filter-rail" aria-label="Filter orders by status">{([{ label: 'All', value: 'All' }, { label: 'New', value: 'New' }, { label: 'Confirmed', value: 'Confirmed' }, { label: 'Preparing', value: 'Preparing' }, { label: 'Delivery', value: 'Out for delivery' }, { label: 'Delivered', value: 'Delivered' }] as { label: string; value: Status | 'All' }[]).map((filter) => <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}>{filter.label}</button>)}</div>
-      <section className="ledger-section"><h2>{orderDate === dateKey(new Date()) ? 'Today' : shortDate(orderDate)}</h2><div className="order-ledger">{visibleOrders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another date, status, or search." />}</div></section>
+      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
     {tab === 'inventory' && <section className="page">
@@ -418,12 +441,13 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     </div></div>}
 
-    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} dark={dark} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled').length} active deliveries</p></div><button className="map-theme" onClick={() => setDark(!dark)}>{dark ? <Moon weight="fill" /> : <Sun />}<span>{dark ? 'Dark' : 'Light'}</span><CaretDown /></button><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
+    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled').length} active deliveries</p></div><button className="map-theme" onClick={() => setDark(!dark)}>{dark ? <Moon weight="fill" /> : <Sun />}<span>{dark ? 'Dark' : 'Light'}</span><CaretDown /></button><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
 
     <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees' || tab === 'settings'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
     {tab === 'orders' && <button className="ledger-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
     {tab === 'inventory' && <button className="ledger-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
+    {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
     {showConfirmationTeam && <Modal title="Confirmation team" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Add your confirmation staff here. Admin confirmations are always recorded with no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Bonus per confirmed order (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
@@ -463,6 +487,60 @@ function OrderCard({ order, products, members, confirmationEmployees, onStatus, 
 }
 
 function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark: boolean; toggleTheme: () => void; actions?: ReactNode; back?: () => void }) { return <header className="ledger-header"><div className="ledger-title-wrap">{back && <button className="back-icon" aria-label="Go back" onClick={back}><ArrowLeft /></button>}<div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="header-actions"><button className="square-action theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Moon weight="fill" /> : <Sun />}</button>{actions}</div></header> }
+
+function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onChange: (range: DateRange) => void; close: () => void }) {
+  const [visibleMonth, setVisibleMonth] = useState(() => { const date = new Date(`${value.start}T12:00:00`); return new Date(date.getFullYear(), date.getMonth(), 1) })
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
+  const grid = useRef<HTMLDivElement>(null)
+  const dragAnchor = useRef<string | null>(null)
+  const dragMoved = useRef(false)
+  const continuingSelection = useRef(false)
+  const today = dateKey(new Date())
+  const monthStart = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1)
+  const calendarStart = new Date(monthStart); calendarStart.setDate(calendarStart.getDate() - ((calendarStart.getDay() + 6) % 7))
+  const days = Array.from({ length: 42 }, (_item, index) => { const day = new Date(calendarStart); day.setDate(calendarStart.getDate() + index); return day })
+  const selectTo = (anchor: string, target: string) => onChange(normalizedRange(anchor, target))
+  const chooseWithKeyboard = (key: string) => {
+    if (selectionAnchor) { selectTo(selectionAnchor, key); setSelectionAnchor(null) }
+    else { onChange({ start: key, end: key }); setSelectionAnchor(key) }
+  }
+  const startDrag = (key: string, pointerId: number) => {
+    const anchor = selectionAnchor ?? key
+    dragAnchor.current = anchor; dragMoved.current = false; continuingSelection.current = Boolean(selectionAnchor)
+    if (selectionAnchor) selectTo(selectionAnchor, key); else onChange({ start: key, end: key })
+    grid.current?.setPointerCapture(pointerId)
+  }
+  const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragAnchor.current) return
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>('[data-date]')
+    const key = target?.dataset.date
+    if (!key) return
+    if (key !== dragAnchor.current) dragMoved.current = true
+    selectTo(dragAnchor.current, key)
+  }
+  const endDrag = () => {
+    if (!dragAnchor.current) return
+    if (dragMoved.current || continuingSelection.current) setSelectionAnchor(null); else setSelectionAnchor(dragAnchor.current)
+    dragAnchor.current = null
+  }
+  const resetToMonth = () => {
+    const now = new Date(); const range = { start: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)), end: monthEndKey(now) }
+    onChange(range); setVisibleMonth(new Date(now.getFullYear(), now.getMonth(), 1)); setSelectionAnchor(null)
+  }
+  return <div className="range-calendar-scrim" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) close() }}>
+    <section className="range-calendar" role="dialog" aria-modal="true" aria-label="Choose order date range">
+      <header><div><span>Order range</span><strong>{rangeLabel(value)}</strong></div><button type="button" onClick={close} aria-label="Close calendar"><X /></button></header>
+      <div className="calendar-month-nav"><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} aria-label="Previous month"><CaretLeft /></button><h2>{monthLabel(dateKey(visibleMonth))}</h2><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} aria-label="Next month"><CaretRight /></button></div>
+      <p className="calendar-hint">Press and swipe across dates, or tap a start and end date.</p>
+      <div className="calendar-weekdays" aria-hidden="true">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}</div>
+      <div className="calendar-grid" ref={grid} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}>
+        {days.map((day) => { const key = dateKey(day); const inMonth = day.getMonth() === visibleMonth.getMonth(); const inRange = key >= value.start && key <= value.end; const edge = key === value.start || key === value.end
+          return <button key={key} type="button" data-date={key} className={`${inMonth ? '' : 'outside'} ${inRange ? 'in-range' : ''} ${edge ? 'range-edge' : ''} ${key === today ? 'today' : ''}`} aria-label={longDate(key)} aria-pressed={inRange} onPointerDown={(event) => { event.preventDefault(); startDrag(key, event.pointerId) }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseWithKeyboard(key) } }}><span>{day.getDate()}</span></button> })}
+      </div>
+      <footer><button type="button" className="calendar-reset" onClick={resetToMonth}>This month</button><button type="button" className="calendar-done" onClick={close}>Show orders</button></footer>
+    </section>
+  </div>
+}
 function StatusIcon({ status }: { status: Status }) { if (status === 'Out for delivery') return <Truck />; if (status === 'Delivered' || status === 'Confirmed') return <CheckCircle />; if (status === 'Cancelled') return <X />; if (status === 'Preparing') return <Package />; return <ClipboardText /> }
 function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) { const icons = { orders: <ClipboardText />, inventory: <Cube />, profit: <ChartBar />, employees: <UsersThree />, map: <MapPin /> }; return <button className={active ? 'active' : ''} onClick={onClick}>{icons[icon]}<span>{label}</span></button> }
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) { return <div className="profit-metric"><span>{icon}</span><div><p>{label}</p><strong>{value}</strong></div></div> }
@@ -535,7 +613,7 @@ function WorkspaceScreen({ onReady }: { onReady: () => Promise<void> }) {
   return <main className="gate"><p className="eyebrow">FIRST-TIME SETUP</p><h1>{mode === 'create' ? 'Create your shared workspace' : 'Join your partner'}</h1><p>{mode === 'create' ? 'You will receive a code to share with your friend.' : 'Enter the code shown in your partner’s app.'}</p><form className="form auth-form" onSubmit={submit}><label className="form-field"><span>{mode === 'create' ? 'Business name' : 'Workspace code'}</span><input name="value" required /></label><button className="primary full">{mode === 'create' ? 'Create workspace' : 'Join workspace'}</button></form><button className="link-button" onClick={() => setMode(mode === 'create' ? 'join' : 'create')}>{mode === 'create' ? 'I have a code' : 'I need to create one'}</button>{message && <p className="message">{message}</p>}</main>
 }
 
-function DeliveryMap({ orders, dark }: { orders: Order[]; dark: boolean }) {
+function DeliveryMap({ orders }: { orders: Order[] }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const fallbackLocation: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
@@ -567,7 +645,7 @@ function DeliveryMap({ orders, dark }: { orders: Order[]; dark: boolean }) {
     map.current?.remove();
     map.current = L.map(element.current, { zoomControl: false }).setView([currentLocation.latitude, currentLocation.longitude], 12);
     L.control.zoom({ position: 'bottomright' }).addTo(map.current);
-    L.tileLayer(dark ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
     const layer = L.layerGroup().addTo(map.current);
     const markerIcon = new L.Icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png', shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] });
     const currentLabel = usingFallbackLocation ? 'Hay El Majd (location permission unavailable)' : 'Your current location';
@@ -585,7 +663,7 @@ function DeliveryMap({ orders, dark }: { orders: Order[]; dark: boolean }) {
     map.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14, animate: false });
     const invalidateTimer = window.setTimeout(() => map.current?.invalidateSize({ animate: false }), 100);
     return () => { window.clearTimeout(invalidateTimer); const currentMap = map.current; map.current = null; currentMap?.stop(); currentMap?.remove(); };
-  }, [resolvedOrders, currentLocation, usingFallbackLocation, dark]);
+  }, [resolvedOrders, currentLocation, usingFallbackLocation]);
 
   return <><div ref={element} className="map-canvas" />{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
 }
