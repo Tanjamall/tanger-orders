@@ -155,6 +155,19 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     localStorage.setItem('quiet-ledger-theme', dark ? 'dark' : 'light')
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
   }, [dark])
+  useEffect(() => {
+    if (!showSearch) return
+    const dismissSearch = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.search-field') || target?.closest('[data-search-toggle]')) return
+      setShowSearch(false)
+    }
+    const dismissWithEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowSearch(false) }
+    document.addEventListener('pointerdown', dismissSearch)
+    document.addEventListener('keydown', dismissWithEscape)
+    return () => { document.removeEventListener('pointerdown', dismissSearch); document.removeEventListener('keydown', dismissWithEscape) }
+  }, [showSearch])
+  useEffect(() => { if (tab !== 'orders') setShowSearch(false) }, [tab])
 
   async function loadCloud() {
     if (!supabase || !session) return
@@ -404,7 +417,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {supabase && session && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
     {tab !== 'map' && <div className="ledger-scroll"><div className="ledger-content">
     {tab === 'orders' && <section className="page quiet-orders">
-      <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className={`square-action ${showSearch ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
+      <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className="square-action" aria-label="Open settings" onClick={() => setTab('settings')}><GearSix /></button><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
       <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
       <div className="filter-rail" aria-label="Filter orders by status">{orderFilters.map((filter) => {
@@ -415,14 +428,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     </section>}
 
     {tab === 'inventory' && <section className="page">
-      <PageHeader title="Inventory" subtitle="Products and bundles" dark={dark} toggleTheme={() => setDark(!dark)} actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
+      <PageHeader title="Inventory" subtitle="Products and bundles" actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
       <section className="inventory-overview"><Cube /><b>{products.length}</b><span>items</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
       <div className="inventory-ledger">{products.map((product) => { const low = !product.components && product.stock <= product.lowStockAt; return <article className="inventory-row" key={product.id}><span className="product-icon">{product.components ? <Stack /> : <Package />}</span><div className="inventory-copy"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle` : `Cost ${money(product.cost)} · Selling ${money(product.price)}`}</p>{product.components && <p>Cost {money(productCost(product, products))} · Selling {money(product.price)}</p>}</div><div className={`stock-copy ${low ? 'is-low' : ''}`}><b>{product.components ? bundleStock(product, products) : product.stock}</b><span>{product.components ? 'calculated' : low ? 'Low stock' : 'in stock'}</span></div><div className="inventory-row-actions"><button aria-label={`Edit ${product.name}`} onClick={() => setEditingProduct(product)}><PencilSimple /></button><button className="danger-icon" aria-label={`Delete ${product.name}`} onClick={() => void deleteProduct(product)}><Trash /></button></div></article> })}</div>
       <p className="info-strip"><NoteBlank />Bundle stock is calculated from the products inside it.</p>
     </section>}
 
     {tab === 'profit' && <section className="page">
-      <PageHeader title="Profit" subtitle="Delivered orders only" dark={dark} toggleTheme={() => setDark(!dark)} />
+      <PageHeader title="Profit" subtitle="Delivered orders only" />
       <section className="range-control" aria-label="Choose profit date range"><label><span>From</span><div><CalendarBlank /><input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></div></label><i /><label><span>To</span><div><CalendarBlank /><input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></div></label></section>
       <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div>
       <section className="net-profit"><span>Net profit</span><strong>{money(profitTotals.profit)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
@@ -433,17 +446,17 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
-        <PageHeader title={selectedEmployee.name} subtitle={selectedEmployee.active ? 'Active confirmation employee' : 'Inactive confirmation employee'} dark={dark} toggleTheme={() => setDark(!dark)} back={() => setSelectedEmployeeId(null)} />
+        <PageHeader title={selectedEmployee.name} subtitle={selectedEmployee.active ? 'Active confirmation employee' : 'Inactive confirmation employee'} back={() => setSelectedEmployeeId(null)} />
         <div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? selectedEmployee.bonus), 0))}</strong><small>{selectedEmployeeOrders.length} confirmed {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section><h3>Confirmation history</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => products.find((product) => product.id === item.productId)?.name ?? 'Product').join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? selectedEmployee.bonus)}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations yet" copy="Assign this employee when confirming an order." />}</div>
       </> : <>
-        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" dark={dark} toggleTheme={() => setDark(!dark)} actions={<button className="square-action" aria-label="Open settings" onClick={() => setTab('settings')}><GearSix /></button>} />
+        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" />
         <p className="page-intro">Tap an employee to view confirmation history.</p>
         <div className="employee-ledger">{employeeSummaries.map(({ employee, count, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{count} confirmed {count === 1 ? 'order' : 'orders'}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add confirmation employees from Settings." />}</div>
       </>}
     </section>}
 
     {tab === 'settings' && <section className="page settings-page">
-      <PageHeader title="Settings" subtitle="Workspaces, team, and app controls" dark={dark} toggleTheme={() => setDark(!dark)} back={() => setTab('employees')} />
+      <PageHeader title="Settings" subtitle="Workspaces, team, and app controls" back={() => setTab('orders')} />
       <section className="settings-section"><h2>Shared workspace</h2><p>Use this code to invite a partner.</p><button className="workspace-code" onClick={() => { if (workspaceCode) void navigator.clipboard.writeText(workspaceCode); setNotice('Workspace code copied.') }}><strong>{workspaceCode ?? 'Loading…'}</strong><Copy /></button><div className="workspace-list">{workspaces.map((workspace) => <div className={workspace.id === workspaceId ? 'current' : ''} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}><Buildings /><span>{workspace.name}{workspace.id === workspaceId && <small> · Current</small>}</span></button>{workspace.is_owner && <button className="danger-icon" aria-label={`Delete ${workspace.name}`} onClick={() => void deleteWorkspace(workspace.id, workspace.name)}><Trash /></button>}</div>)}</div><div className="settings-inline-actions"><button onClick={() => void manageWorkspace('create')}><Plus />Create workspace</button><button onClick={() => void manageWorkspace('join')}><UserPlus />Join workspace</button></div></section>
       <section className="settings-section"><div className="settings-section-head"><div><h2>Confirmation team</h2><p>Admins can confirm orders with no bonus.</p></div><button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add</button></div><div className="team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><span className="team-avatar"><User /></span><div><h3>{employee.name}</h3><p>{money(employee.bonus)} per confirmation · <b>{employee.active ? 'Active' : 'Inactive'}</b></p></div><button aria-label={`Edit ${employee.name}`} onClick={() => void editConfirmationEmployee(employee)}><PencilSimple /></button><button aria-label={employee.active ? `Pause ${employee.name}` : `Activate ${employee.name}`} onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? <Pause /> : <Play />}</button></article>)}{!confirmationEmployees.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add your confirmation team here." />}</div></section>
       <section className="account-actions"><button onClick={() => void loadCloud()}><ArrowsClockwise />Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}><SignOut />Sign out</button></section>
@@ -451,9 +464,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     </div></div>}
 
-    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled').length} active deliveries</p></div><button className="map-theme" onClick={() => setDark(!dark)}>{dark ? <Moon weight="fill" /> : <Sun />}<span>{dark ? 'Dark' : 'Light'}</span><CaretDown /></button><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
+    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
 
-    <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees' || tab === 'settings'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
+    <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders' || tab === 'settings'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
     {tab === 'orders' && <button className="ledger-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
     {tab === 'inventory' && <button className="ledger-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
@@ -496,7 +509,7 @@ function OrderCard({ order, products, members, confirmationEmployees, onStatus, 
   return <article className={`order-row tone-${tone}`}><span className="status-rail"><i /></span><div className="order-primary"><div className="order-heading"><div><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}</a></div><div className="row-actions"><label className={`status-control tone-${tone}`}><StatusIcon status={order.status} /><select aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select><CaretDown /></label><button aria-label={`Edit ${order.client}`} onClick={() => onEdit(order)}><PencilSimple /></button></div></div><div className="address-line">{order.locationUrl?.trim() ? <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><span>{order.address}</span><ArrowSquareOut /><span className="map-mini"><MapPin /></span></a> : <span>{order.address}</span>}</div><p className="product-line">{lines}</p>{order.notes?.trim() && <p className="note-line"><NoteBlank /><span><b>Note:</b> {order.notes}</span></p>}<div className="order-meta"><span><Tag />{money(total)}</span><span><User />{assignee}</span>{confirmer && <span><UserCheck />Confirmed by {confirmer.name}</span>}</div></div></article>
 }
 
-function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark: boolean; toggleTheme: () => void; actions?: ReactNode; back?: () => void }) { return <header className="ledger-header"><div className="ledger-title-wrap">{back && <button className="back-icon" aria-label="Go back" onClick={back}><ArrowLeft /></button>}<div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="header-actions"><button className="square-action theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Moon weight="fill" /> : <Sun />}</button>{actions}</div></header> }
+function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark?: boolean; toggleTheme?: () => void; actions?: ReactNode; back?: () => void }) { return <header className="ledger-header"><div className="ledger-title-wrap">{back && <button className="back-icon" aria-label="Go back" onClick={back}><ArrowLeft /></button>}<div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="header-actions">{typeof dark === 'boolean' && toggleTheme && <button className="square-action theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Moon weight="fill" /> : <Sun />}</button>}{actions}</div></header> }
 
 function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onChange: (range: DateRange) => void; close: () => void }) {
   const [visibleMonth, setVisibleMonth] = useState(() => { const date = new Date(`${value.start}T12:00:00`); return new Date(date.getFullYear(), date.getMonth(), 1) })
@@ -558,6 +571,7 @@ function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; cop
 function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button aria-label="Close" onClick={close}><X /></button></div>{children}</section></div> }
 function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
 type Coordinates = { latitude: number; longitude: number }
+type CurrentLocation = Coordinates & { accuracy: number }
 function mapCoordinates(locationUrl?: string): Coordinates | null {
   if (!locationUrl) return null
   const source = decodeURIComponent(locationUrl)
@@ -627,17 +641,26 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const fallbackLocation: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
-  const [currentLocation, setCurrentLocation] = useState<Coordinates>(fallbackLocation);
-  const [usingFallbackLocation, setUsingFallbackLocation] = useState(true);
+  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
+  const [locationStatus, setLocationStatus] = useState<'locating' | 'available' | 'denied' | 'unavailable'>('locating');
   const [resolvedOrders, setResolvedOrders] = useState<{ order: Order; coordinates: Coordinates }[]>([]);
 
+  const acceptLocation = ({ coords }: GeolocationPosition) => {
+    const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy };
+    setCurrentLocation(location); setLocationStatus('available');
+    map.current?.flyTo([location.latitude, location.longitude], Math.max(map.current.getZoom(), 15), { animate: true, duration: .7 });
+  };
+  const rejectLocation = (error: GeolocationPositionError) => setLocationStatus(error.code === 1 ? 'denied' : 'unavailable');
+  const requestCurrentLocation = () => {
+    if (!navigator.geolocation) { setLocationStatus('unavailable'); return; }
+    setLocationStatus('locating');
+    navigator.geolocation.getCurrentPosition(acceptLocation, rejectLocation, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 });
+  };
+
   useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => { setCurrentLocation({ latitude: coords.latitude, longitude: coords.longitude }); setUsingFallbackLocation(false); },
-      () => setUsingFallbackLocation(true),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-    );
+    if (!navigator.geolocation) { setLocationStatus('unavailable'); return; }
+    const watchId = navigator.geolocation.watchPosition(acceptLocation, rejectLocation, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 });
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   useEffect(() => {
@@ -650,18 +673,20 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
 
   useEffect(() => {
     if (!element.current) return;
-    const points = [...resolvedOrders].sort((a, b) => distanceKm(currentLocation, a.coordinates) - distanceKm(currentLocation, b.coordinates));
+    const locationAnchor = currentLocation ?? fallbackLocation;
+    const points = [...resolvedOrders].sort((a, b) => distanceKm(locationAnchor, a.coordinates) - distanceKm(locationAnchor, b.coordinates));
 
     map.current?.remove();
-    map.current = L.map(element.current, { zoomControl: false }).setView([currentLocation.latitude, currentLocation.longitude], 12);
+    map.current = L.map(element.current, { zoomControl: false }).setView([locationAnchor.latitude, locationAnchor.longitude], 12);
     L.control.zoom({ position: 'bottomright' }).addTo(map.current);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
     const layer = L.layerGroup().addTo(map.current);
     const markerIcon = new L.Icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png', shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] });
-    const currentLabel = usingFallbackLocation ? 'Hay El Majd (location permission unavailable)' : 'Your current location';
-    L.marker([currentLocation.latitude, currentLocation.longitude], { icon: markerIcon })
-      .bindPopup(`<strong>${currentLabel}</strong>`)
-      .addTo(layer);
+    if (currentLocation) {
+      const currentIcon = L.divIcon({ className: 'current-location-marker', html: '<span><i></i></span>', iconSize: [30, 30], iconAnchor: [15, 15] });
+      L.circle([currentLocation.latitude, currentLocation.longitude], { radius: Math.min(Math.max(currentLocation.accuracy, 20), 500), color: '#1679e8', weight: 1, fillColor: '#56a7ff', fillOpacity: .12, interactive: false }).addTo(layer);
+      L.marker([currentLocation.latitude, currentLocation.longitude], { icon: currentIcon, zIndexOffset: 2000 }).bindPopup('<strong>Your current location</strong>').addTo(layer);
+    }
 
     points.forEach(({ order, coordinates }, index) => {
       L.marker([coordinates.latitude, coordinates.longitude], { icon: markerIcon, zIndexOffset: 1000 })
@@ -669,11 +694,13 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
         .addTo(layer);
     });
 
-    const bounds: [number, number][] = [[currentLocation.latitude, currentLocation.longitude], ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
-    map.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14, animate: false });
+    const bounds: [number, number][] = [...(currentLocation ? [[currentLocation.latitude, currentLocation.longitude] as [number, number]] : []), ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
+    if (bounds.length > 1) map.current.fitBounds(L.latLngBounds(bounds), { padding: [34, 34], maxZoom: 14, animate: false });
+    else if (bounds.length === 1) map.current.setView(bounds[0], 15, { animate: false });
     const invalidateTimer = window.setTimeout(() => map.current?.invalidateSize({ animate: false }), 100);
     return () => { window.clearTimeout(invalidateTimer); const currentMap = map.current; map.current = null; currentMap?.stop(); currentMap?.remove(); };
-  }, [resolvedOrders, currentLocation, usingFallbackLocation]);
+  }, [resolvedOrders, currentLocation]);
 
-  return <><div ref={element} className="map-canvas" />{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
+  const locationLabel = locationStatus === 'available' ? 'My location' : locationStatus === 'locating' ? 'Locating…' : locationStatus === 'denied' ? 'Allow location' : 'Locate me';
+  return <><div ref={element} className="map-canvas" /><button type="button" className={`map-location ${locationStatus === 'locating' ? 'is-locating' : ''}`} aria-label={currentLocation ? 'Center map on my location' : 'Show my current location'} onClick={() => currentLocation ? map.current?.flyTo([currentLocation.latitude, currentLocation.longitude], 15, { animate: true, duration: .7 }) : requestCurrentLocation()}><NavigationArrow weight={currentLocation ? 'fill' : 'regular'} /><span>{locationLabel}</span></button>{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
 }
