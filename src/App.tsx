@@ -1,7 +1,51 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import {
+  ArrowLeft,
+  ArrowSquareOut,
+  ArrowsClockwise,
+  Buildings,
+  CalendarBlank,
+  CaretDown,
+  CaretRight,
+  ChartBar,
+  CheckCircle,
+  ClipboardText,
+  Copy,
+  Cube,
+  GearSix,
+  MagnifyingGlass,
+  MapPin,
+  Moon,
+  NavigationArrow,
+  NoteBlank,
+  Package,
+  Path,
+  Pause,
+  PencilSimple,
+  Play,
+  Plus,
+  SignOut,
+  Stack,
+  Sun,
+  Tag,
+  Trash,
+  Truck,
+  User,
+  UserCheck,
+  UserPlus,
+  UsersThree,
+  WarningCircle,
+  X,
+} from '@phosphor-icons/react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import '@fontsource/fraunces/600.css'
+import '@fontsource/fraunces/700.css'
+import '@fontsource/manrope/400.css'
+import '@fontsource/manrope/500.css'
+import '@fontsource/manrope/600.css'
+import '@fontsource/manrope/700.css'
 import { initialOrders, initialProducts, people } from './data'
 import { supabase } from './supabase'
 import type { Order, PaymentStatus, Product, Status } from './types'
@@ -15,7 +59,8 @@ const isConfirmedOrder = (status: Status) => ['Confirmed', 'Preparing', 'Out for
 const dateKey = (value: Date | string) => { const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 const monthStartKey = () => { const today = new Date(); return dateKey(new Date(today.getFullYear(), today.getMonth(), 1)) }
 const dateStamp = (key: string) => { const [year, month, day] = key.split('-'); return `${day}/${month}/${year}` }
-function dateHeading(key: string) { const today = dateKey(new Date()); const yesterday = dateKey(new Date(Date.now() - 86400000)); return key === today ? 'Today' : key === yesterday ? 'Yesterday' : dateStamp(key) }
+const longDate = (key: string) => new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${key}T12:00:00`))
+const shortDate = (key: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${key}T12:00:00`))
 
 function productCost(product: Product, all: Product[]): number {
   if (!product.components) return product.cost
@@ -25,7 +70,16 @@ function productCost(product: Product, all: Product[]): number {
   }, 0)
 }
 
+function bundleStock(product: Product, all: Product[]) {
+  if (!product.components?.length) return product.stock
+  return Math.min(...product.components.map((component) => {
+    const child = all.find((item) => item.id === component.productId)
+    return child ? Math.floor(child.stock / component.quantity) : 0
+  }))
+}
+
 export default function App() {
+  const devDemo = import.meta.env.DEV && new URLSearchParams(window.location.search).get('demo') === '1'
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(Boolean(supabase))
   useEffect(() => {
@@ -34,15 +88,20 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setLoading(false) })
     return () => listener.subscription.unsubscribe()
   }, [])
-  if (loading) return <div className="gate">Connecting to Tanger Orders…</div>
-  if (supabase && !session) return <AuthScreen />
-  return <OrderApp session={session} />
+  if (!devDemo && loading) return <div className="gate">Connecting to Tanger Orders…</div>
+  if (!devDemo && supabase && !session) return <AuthScreen />
+  return <OrderApp session={session} devDemo={devDemo} />
 }
 
-function OrderApp({ session }: { session: Session | null }) {
-  const [tab, setTab] = useState<'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings'>('orders')
-  const [orders, setOrders] = useState<Order[]>(() => JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders)
-  const [products, setProducts] = useState<Product[]>(() => JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
+function OrderApp({ session, devDemo }: { session: Session | null; devDemo: boolean }) {
+  const [tab, setTab] = useState<'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings'>(() => {
+    const requested = devDemo ? new URLSearchParams(window.location.search).get('tab') : null
+    return requested && ['orders', 'inventory', 'profit', 'employees', 'map', 'settings'].includes(requested) ? requested as 'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings' : 'orders'
+  })
+  const [dark, setDark] = useState(() => localStorage.getItem('quiet-ledger-theme') === 'dark')
+  const [orderDate, setOrderDate] = useState(() => dateKey(new Date()))
+  const [orders, setOrders] = useState<Order[]>(() => devDemo ? initialOrders : JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders)
+  const [products, setProducts] = useState<Product[]>(() => devDemo ? initialProducts : JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<Status | 'All'>('All')
   const [showOrder, setShowOrder] = useState(false)
@@ -56,20 +115,23 @@ function OrderApp({ session }: { session: Session | null }) {
   const [routeBusy, setRouteBusy] = useState(false)
   const [routeError, setRouteError] = useState('')
   const [plannedOrders, setPlannedOrders] = useState<Order[]>([])
-  const [showAccountMenu, setShowAccountMenu] = useState(false)
-  const [notice, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null)
-  const [workspaceCode, setWorkspaceCode] = useState<string | null>(null)
-  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>([])
+  const [, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => devDemo ? 'demo-workspace' : null)
+  const [workspaceCode, setWorkspaceCode] = useState<string | null>(() => devDemo ? 'TNG-4821' : null)
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>(() => devDemo ? [{ id: 'demo-workspace', name: 'Tanger Orders', join_code: 'TNG-4821', is_owner: true }] : [])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
-  const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>([])
+  const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>(() => devDemo ? [{ id: 'demo-amina', name: 'Amina', bonus: 5, active: true }, { id: 'demo-karim', name: 'Karim', bonus: 5, active: true }] : [])
   const [showConfirmationTeam, setShowConfirmationTeam] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
 
-  useEffect(() => { localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders])
-  useEffect(() => { localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products])
+  useEffect(() => { if (!devDemo) localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders, devDemo])
+  useEffect(() => { if (!devDemo) localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products, devDemo])
+  useEffect(() => {
+    localStorage.setItem('quiet-ledger-theme', dark ? 'dark' : 'light')
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+  }, [dark])
 
   async function loadCloud() {
     if (!supabase || !session) return
@@ -122,10 +184,16 @@ function OrderApp({ session }: { session: Session | null }) {
     const confirmationBonus = confirmationCost(order)
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs - confirmationBonus, confirmationBonuses: sum.confirmationBonuses + confirmationBonus }
   }, { revenue: 0, profit: 0, confirmationBonuses: 0 }), [profitOrders, products, confirmationEmployees])
-  const confirmationPerformance = confirmationEmployees.map((employee) => {
-    const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt && (!profitStart || dateKey(order.confirmedAt) >= profitStart) && (!profitEnd || dateKey(order.confirmedAt) <= profitEnd))
-    return { employee, count: confirmations.length, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? employee.bonus), 0) }
-  }).filter(({ employee, count }) => employee.active || count > 0)
+  const selectedDayOrders = orders.filter((order) => dateKey(order.createdAt) === orderDate)
+  const selectedDayDelivered = orders.filter((order) => order.status === 'Delivered' && dateKey(order.deliveredAt || order.createdAt) === orderDate)
+  const selectedDayProfit = selectedDayDelivered.reduce((sum, order) => {
+    const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
+    const costs = order.items.reduce((value, item) => {
+      const product = products.find((candidate) => candidate.id === item.productId)
+      return value + (product ? productCost(product, products) * item.quantity : 0)
+    }, 0) + order.deliveryCharge + order.otherExpense + confirmationCost(order)
+    return sum + revenue - costs
+  }, 0)
   const employeeSummaries = confirmationEmployees.map((employee) => {
     const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt)
     const productNames = [...new Set(confirmations.flatMap((order) => order.items.map((item) => products.find((product) => product.id === item.productId)?.name).filter((name): name is string => Boolean(name))))]
@@ -134,14 +202,9 @@ function OrderApp({ session }: { session: Session | null }) {
   const selectedEmployee = confirmationEmployees.find((employee) => employee.id === selectedEmployeeId)
   const selectedEmployeeOrders = selectedEmployee ? orders.filter((order) => order.confirmationEmployeeId === selectedEmployee.id && order.confirmedAt).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
 
-  const visibleOrders = orders
+  const visibleOrders = selectedDayOrders
     .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
     .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
-  const ordersByDate = visibleOrders.reduce<{ key: string; orders: Order[] }[]>((groups, order) => {
-    const key = dateKey(order.createdAt); const group = groups.find((item) => item.key === key)
-    if (group) group.orders.push(order); else groups.push({ key, orders: [order] })
-    return groups
-  }, [])
   const changeStatus = async (id: string, status: Status) => {
     const currentOrder = orders.find((order) => order.id === id)
     const deliveredAt = status === 'Delivered' ? currentOrder?.deliveredAt || new Date().toISOString() : undefined
@@ -171,7 +234,7 @@ function OrderApp({ session }: { session: Session | null }) {
       const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null, confirmation_employee_id: order.confirmationEmployeeId ?? null, confirmation_bonus: order.confirmationBonus ?? 0, confirmed_at: order.confirmedAt ?? null })
       if (error) setNotice(error.message)
     }
-    setShowOrder(false); setNotice('Order added. Connect Supabase to share it with your partner.')
+    setShowOrder(false); setNotice(supabase && workspaceId ? 'Order added to the shared workspace.' : 'Order added to this browser preview.')
   }
 
   async function addProduct(form: HTMLFormElement) {
@@ -241,14 +304,14 @@ function OrderApp({ session }: { session: Session | null }) {
     if (!supabase || id === workspaceId) return
     const { error } = await supabase.rpc('switch_workspace', { target_workspace_id: id })
     if (error) { setNotice(error.message); return }
-    await loadCloud(); setShowAccountMenu(false)
+    await loadCloud()
   }
 
   async function deleteWorkspace(targetWorkspaceId: string, workspaceName: string) {
     if (!supabase || !window.confirm(`Delete “${workspaceName}” and all of its orders, inventory, and profit history? This cannot be undone.`)) return
     const { error } = await supabase.rpc('delete_workspace', { target_workspace_id: targetWorkspaceId })
     if (error) { setNotice(error.message); return }
-    setShowAccountMenu(false); await loadCloud()
+    await loadCloud()
   }
 
   async function addConfirmationEmployee(form: HTMLFormElement) {
@@ -307,76 +370,67 @@ function OrderApp({ session }: { session: Session | null }) {
     }, () => { setRouteBusy(false); setRouteError('Allow location access to plan the deliveries from where you are.') }, { enableHighAccuracy: true, timeout: 10000 })
   }
 
-  return <main className="app-shell">
-    <header className="topbar minimal-topbar">
-      <button className="avatar" title="Settings" aria-label="Open settings" onClick={() => { setSelectedEmployeeId(null); setTab('settings') }}>S</button>
-    </header>
-
-    {showAccountMenu && <section className="account-menu">
-      <p>Shared workspace</p>
-      <strong>{workspaceCode ?? 'Loading code…'}</strong>
-      <p className="workspace-label">Your workspaces</p>
-      <div className="workspace-list">{workspaces.map((workspace) => <div className={`workspace-row ${workspace.id === workspaceId ? 'current-workspace' : ''}`} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}>⌂ {workspace.name}{workspace.id === workspaceId && ' · Current'}</button>{workspace.is_owner && <button className="row-delete" aria-label={`Delete ${workspace.name}`} title="Delete workspace" onClick={() => void deleteWorkspace(workspace.id, workspace.name)}>⌫</button>}</div>)}</div>
-      <div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>＋ Create</button><button onClick={() => void manageWorkspace('join')}>↗ Join</button></div>
-      <button onClick={() => void loadCloud()}>↻ Refresh shared orders</button>
-      <button className="sign-out" onClick={() => void supabase?.auth.signOut()}>↪ Sign out</button>
-      <button onClick={() => { setShowAccountMenu(false); setShowConfirmationTeam(true) }}>Confirmation team</button>
-    </section>}
-
-    {supabase && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
-    {tab === 'orders' && <section className="page">
-      <div className="page-heading"><div><h2>Orders</h2><p>{orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} active orders to manage</p></div><div className="order-actions"><button className="route-button" onClick={() => void planRoute()}>Route</button><button className={`icon-button ${showSearch ? 'is-active' : ''}`} title="Search orders" aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}>⌕</button><button className="primary" onClick={() => setShowOrder(true)}>+ New order</button></div></div>
-      {showSearch && <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, number, or address" /></label>}
-      <div className="status-scroll" aria-label="Filter orders by status"><button className={`status filter-chip ${statusFilter === 'All' ? 'selected' : ''}`} onClick={() => setStatusFilter('All')}>All <b>{orders.length}</b></button>{statuses.map((status) => <button className={`status filter-chip ${status.toLowerCase().replaceAll(' ', '-')} ${statusFilter === status ? 'selected' : ''}`} key={status} onClick={() => setStatusFilter(status)}>{status} <b>{orders.filter(o => o.status === status).length}</b></button>)}</div>
-      <div className="order-list">{ordersByDate.map((group) => <section className="order-day" key={group.key}><h3>{dateHeading(group.key)}</h3>{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}</section>)}</div>
+  return <main className={`app-shell ${dark ? 'theme-dark' : 'theme-light'}`}>
+    {supabase && session && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
+    {tab !== 'map' && <div className="ledger-scroll"><div className="ledger-content">
+    {tab === 'orders' && <section className="page quiet-orders">
+      <PageHeader title="Orders" subtitle={longDate(orderDate)} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className={`square-action ${showSearch ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
+      <section className="profit-date-bar"><div><span>{orderDate === dateKey(new Date()) ? "Today's profit" : 'Selected profit'}</span><strong>{money(selectedDayProfit)}</strong><small><CheckCircle />{selectedDayDelivered.length} delivered</small></div><label className="date-control"><CalendarBlank /><span><b>{orderDate === dateKey(new Date()) ? 'Today' : 'Selected date'}</b><small>{shortDate(orderDate)}</small></span><CaretDown /><input type="date" value={orderDate} max={dateKey(new Date())} onChange={(event) => setOrderDate(event.target.value)} aria-label="Filter orders by date" /></label></section>
+      {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
+      <div className="filter-rail" aria-label="Filter orders by status">{([{ label: 'All', value: 'All' }, { label: 'New', value: 'New' }, { label: 'Confirmed', value: 'Confirmed' }, { label: 'Preparing', value: 'Preparing' }, { label: 'Delivery', value: 'Out for delivery' }, { label: 'Delivered', value: 'Delivered' }] as { label: string; value: Status | 'All' }[]).map((filter) => <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}>{filter.label}</button>)}</div>
+      <section className="ledger-section"><h2>{orderDate === dateKey(new Date()) ? 'Today' : shortDate(orderDate)}</h2><div className="order-ledger">{visibleOrders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another date, status, or search." />}</div></section>
     </section>}
 
     {tab === 'inventory' && <section className="page">
-      <div className="page-heading"><div><h2>Inventory</h2><p>Products and bundles you are ready to sell</p></div><div className="inventory-actions"><button className="secondary" onClick={() => setShowBundle(true)}>◇ Bundle</button><button className="primary" onClick={() => setShowProduct(true)}>+ Product</button></div></div>
-      <div className="inventory-list">{products.map((product) => <article className="inventory-card" key={product.id}><div className="product-mark">{product.components ? '◇' : '□'}</div><div className="grow"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle · Cost ${money(productCost(product, products))}` : `Cost ${money(product.cost)} · Selling ${money(product.price)}`}</p></div><div className="stock"><b>{product.components ? 'Bundle' : product.stock}</b><span>{product.components ? 'calculated' : 'in stock'}</span></div><div className="inventory-actions-row"><button title="Edit" onClick={() => setEditingProduct(product)}>✎</button><button className="inventory-delete" title="Delete" onClick={() => void deleteProduct(product)}>⌫</button></div>{!product.components && product.stock <= product.lowStockAt && <span className="low">Low stock</span>}</article>)}</div>
-      <aside className="bundle-note"><b>◇ Bundles</b><span>When a bundle is delivered, the stock of every product inside it is reduced automatically.</span></aside>
+      <PageHeader title="Inventory" subtitle="Products and bundles" dark={dark} toggleTheme={() => setDark(!dark)} actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
+      <section className="inventory-overview"><Cube /><b>{products.length}</b><span>items</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
+      <div className="inventory-ledger">{products.map((product) => { const low = !product.components && product.stock <= product.lowStockAt; return <article className="inventory-row" key={product.id}><span className="product-icon">{product.components ? <Stack /> : <Package />}</span><div className="inventory-copy"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle` : `Cost ${money(product.cost)} · Selling ${money(product.price)}`}</p>{product.components && <p>Cost {money(productCost(product, products))} · Selling {money(product.price)}</p>}</div><div className={`stock-copy ${low ? 'is-low' : ''}`}><b>{product.components ? bundleStock(product, products) : product.stock}</b><span>{product.components ? 'calculated' : low ? 'Low stock' : 'in stock'}</span></div><div className="inventory-row-actions"><button aria-label={`Edit ${product.name}`} onClick={() => setEditingProduct(product)}><PencilSimple /></button><button className="danger-icon" aria-label={`Delete ${product.name}`} onClick={() => void deleteProduct(product)}><Trash /></button></div></article> })}</div>
+      <p className="info-strip"><NoteBlank />Bundle stock is calculated from the products inside it.</p>
     </section>}
 
     {tab === 'profit' && <section className="page">
-      <div className="page-heading"><div><h2>Profit</h2><p>Delivered orders only</p></div></div>
-      <section className="date-filter" aria-label="Choose profit date range"><div><label>From<input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></label><label>To<input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></label></div><div className="date-quick-actions"><button onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div></section>
-      <section className="hero-profit"><p>NET PROFIT</p><strong>{money(profitTotals.profit)}</strong><span>From {profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</span></section>
-      <div className="metric-grid profit-metrics"><Metric label="Sales" value={money(profitTotals.revenue)} /><Metric label="Orders" value={String(profitOrders.length)} /><Metric label="Team bonuses" value={`-${money(profitTotals.confirmationBonuses)}`} /><Metric label="Average net" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></div>
-      <h3 className="section-title">Completed sales</h3><div className="profit-list">{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p>{bonus > 0 && <small>Confirmation: {confirmer?.name || 'Employee'} · -{money(bonus)}</small>}</div><div className="profit-order-values"><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong><span>Sale total</span></div></article> })}{!profitOrders.length && <p className="empty-date-range">No delivered orders in this date range.</p>}</div>
+      <PageHeader title="Profit" subtitle="Delivered orders only" dark={dark} toggleTheme={() => setDark(!dark)} />
+      <section className="range-control" aria-label="Choose profit date range"><label><span>From</span><div><CalendarBlank /><input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></div></label><i /><label><span>To</span><div><CalendarBlank /><input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></div></label></section>
+      <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div>
+      <section className="net-profit"><span>Net profit</span><strong>{money(profitTotals.profit)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
+      <section className="profit-grid"><Metric icon={<Tag />} label="Sales" value={money(profitTotals.revenue)} /><Metric icon={<ClipboardText />} label="Orders" value={String(profitOrders.length)} /><Metric icon={<UsersThree />} label="Team bonuses" value={money(profitTotals.confirmationBonuses)} /><Metric icon={<ChartBar />} label="Average net" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></section>
+      <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p><span>{order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
     </section>}
 
 
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
-        <button className="back-button" onClick={() => setSelectedEmployeeId(null)}>← All employees</button>
-        <div className="page-heading"><div><h2>{selectedEmployee.name}</h2><p>{selectedEmployee.active ? 'Active confirmation employee' : 'Inactive confirmation employee'}</p></div></div>
-        <section className="employee-detail-total"><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? selectedEmployee.bonus), 0))}</strong><small>{selectedEmployeeOrders.length} confirmed {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section>
-        <h3 className="section-title">Confirmation history</h3>
-        <div className="employee-history">{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{order.phone} · {dateStamp(dateKey(order.confirmedAt || order.createdAt))}</p><span>{order.items.map((item) => `${item.quantity}× ${products.find((product) => product.id === item.productId)?.name ?? 'Product'}`).join(', ')}</span><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? selectedEmployee.bonus)}</strong></article>)}{!selectedEmployeeOrders.length && <p className="empty-date-range">No confirmations recorded yet.</p>}</div>
+        <PageHeader title={selectedEmployee.name} subtitle={selectedEmployee.active ? 'Active confirmation employee' : 'Inactive confirmation employee'} dark={dark} toggleTheme={() => setDark(!dark)} back={() => setSelectedEmployeeId(null)} />
+        <div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? selectedEmployee.bonus), 0))}</strong><small>{selectedEmployeeOrders.length} confirmed {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section><h3>Confirmation history</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => products.find((product) => product.id === item.productId)?.name ?? 'Product').join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? selectedEmployee.bonus)}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations yet" copy="Assign this employee when confirming an order." />}</div>
       </> : <>
-        <div className="page-heading"><div><h2>Employees</h2><p>Confirmation work and bonuses</p></div></div>
-        <div className="employee-summary-list">{employeeSummaries.map(({ employee, count, bonus, productNames }) => <button className="employee-summary-card" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-initial">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-summary-copy"><b>{employee.name}</b><small>{count} {count === 1 ? 'confirmed order' : 'confirmed orders'}{!employee.active && ' · Inactive'}</small><em>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</em></span><span className="employee-summary-bonus"><small>Bonuses</small><strong>{money(bonus)}</strong></span><span className="employee-chevron">›</span></button>)}{!employeeSummaries.length && <section className="employee-empty"><b>No employees yet</b><p>Add confirmation employees from Settings, then assign them to orders.</p><button className="primary" onClick={() => setTab('settings')}>Open settings</button></section>}</div>
+        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" dark={dark} toggleTheme={() => setDark(!dark)} actions={<button className="square-action" aria-label="Open settings" onClick={() => setTab('settings')}><GearSix /></button>} />
+        <p className="page-intro">Tap an employee to view confirmation history.</p>
+        <div className="employee-ledger">{employeeSummaries.map(({ employee, count, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{count} confirmed {count === 1 ? 'order' : 'orders'}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add confirmation employees from Settings." />}</div>
       </>}
     </section>}
 
     {tab === 'settings' && <section className="page settings-page">
-      <div className="page-heading"><div><h2>Settings</h2><p>Workspaces, team, and app controls</p></div></div>
-      <section className="settings-block"><div className="settings-block-head"><div><h3>Shared workspace</h3><p>Use this code to invite a partner.</p></div><strong className="settings-code">{workspaceCode ?? 'Loading…'}</strong></div><div className="workspace-list">{workspaces.map((workspace) => <div className={`workspace-row ${workspace.id === workspaceId ? 'current-workspace' : ''}`} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}>{workspace.name}{workspace.id === workspaceId && ' · Current'}</button>{workspace.is_owner && <button className="row-delete" aria-label={`Delete ${workspace.name}`} title="Delete workspace" onClick={() => void deleteWorkspace(workspace.id, workspace.name)}>×</button>}</div>)}</div><div className="workspace-tools"><button onClick={() => void manageWorkspace('create')}>+ Create workspace</button><button onClick={() => void manageWorkspace('join')}>↗ Join workspace</button></div></section>
-      <section className="settings-block"><div className="settings-block-head"><div><h3>Confirmation team</h3><p>Admins can confirm orders with no bonus.</p></div></div><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form settings-add-employee"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Bonus per order (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary">Add</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></section>
-      <section className="settings-block settings-actions"><button onClick={() => void loadCloud()}>Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}>Sign out</button></section>
+      <PageHeader title="Settings" subtitle="Workspaces, team, and app controls" dark={dark} toggleTheme={() => setDark(!dark)} back={() => setTab('employees')} />
+      <section className="settings-section"><h2>Shared workspace</h2><p>Use this code to invite a partner.</p><button className="workspace-code" onClick={() => { if (workspaceCode) void navigator.clipboard.writeText(workspaceCode); setNotice('Workspace code copied.') }}><strong>{workspaceCode ?? 'Loading…'}</strong><Copy /></button><div className="workspace-list">{workspaces.map((workspace) => <div className={workspace.id === workspaceId ? 'current' : ''} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}><Buildings /><span>{workspace.name}{workspace.id === workspaceId && <small> · Current</small>}</span></button>{workspace.is_owner && <button className="danger-icon" aria-label={`Delete ${workspace.name}`} onClick={() => void deleteWorkspace(workspace.id, workspace.name)}><Trash /></button>}</div>)}</div><div className="settings-inline-actions"><button onClick={() => void manageWorkspace('create')}><Plus />Create workspace</button><button onClick={() => void manageWorkspace('join')}><UserPlus />Join workspace</button></div></section>
+      <section className="settings-section"><div className="settings-section-head"><div><h2>Confirmation team</h2><p>Admins can confirm orders with no bonus.</p></div><button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add</button></div><div className="team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><span className="team-avatar"><User /></span><div><h3>{employee.name}</h3><p>{money(employee.bonus)} per confirmation · <b>{employee.active ? 'Active' : 'Inactive'}</b></p></div><button aria-label={`Edit ${employee.name}`} onClick={() => void editConfirmationEmployee(employee)}><PencilSimple /></button><button aria-label={employee.active ? `Pause ${employee.name}` : `Activate ${employee.name}`} onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? <Pause /> : <Play />}</button></article>)}{!confirmationEmployees.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add your confirmation team here." />}</div></section>
+      <section className="account-actions"><button onClick={() => void loadCloud()}><ArrowsClockwise />Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}><SignOut />Sign out</button></section>
     </section>}
 
-    {tab === 'map' && <section className="map-page"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /></section>}
+    </div></div>}
 
-    <nav className="bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
+    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} dark={dark} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled').length} active deliveries</p></div><button className="map-theme" onClick={() => setDark(!dark)}>{dark ? <Moon weight="fill" /> : <Sun />}<span>{dark ? 'Dark' : 'Light'}</span><CaretDown /></button><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
+
+    <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees' || tab === 'settings'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
+    {tab === 'orders' && <button className="ledger-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
+    {tab === 'inventory' && <button className="ledger-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
     {showConfirmationTeam && <Modal title="Confirmation team" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Add your confirmation staff here. Admin confirmations are always recorded with no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Bonus per confirmed order (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Product name</span><input required name="name" /></label><div className="form-row"><label className="form-field"><span>Buying cost</span><input required name="cost" type="number" /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" /></label></div><div className="form-row"><label className="form-field"><span>Opening stock</span><input required name="stock" type="number" /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue="3" /></label></div><button className="primary full">Save product</button></form></Modal>}
     {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Name</span><input required name="name" defaultValue={editingProduct.name} /></label><div className="form-row"><label className="form-field"><span>Cost</span><input name="cost" type="number" defaultValue={editingProduct.components ? productCost(editingProduct, products) : editingProduct.cost} disabled={Boolean(editingProduct.components)} /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" defaultValue={editingProduct.price} /></label></div>{!editingProduct.components && <div className="form-row"><label className="form-field"><span>Stock</span><input name="stock" type="number" defaultValue={editingProduct.stock} /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue={editingProduct.lowStockAt} /></label></div>}<button className="primary full">Save changes</button></form></Modal>}
-    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}>×</button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}>+ Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
-    {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank">Navigate ↗</a></article>)}</div></Modal>}
+    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
+    {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank"><NavigationArrow />Navigate</a></article>)}</div></Modal>}
     </>}
   </main>
 }
@@ -384,33 +438,36 @@ function OrderApp({ session }: { session: Session | null }) {
 function OrderForm({ order, products, members, confirmationEmployees, onSubmit, submitLabel = 'Save order' }: { order?: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onSubmit: (form: HTMLFormElement) => Promise<void>; submitLabel?: string }) {
   const assignees = members.length ? members.map((member) => ({ value: member.id, label: member.display_name || 'Team member' })) : people.map((person) => ({ value: person, label: person }))
   return <form onSubmit={(event) => { event.preventDefault(); void onSubmit(event.currentTarget) }} className="form">
-    <label className="form-field"><span>Client name</span><input required name="client" defaultValue={order?.client} /></label>
+    <label className="form-field"><span>Customer name</span><input required name="client" defaultValue={order?.client} /></label>
     <label className="form-field"><span>WhatsApp number</span><input required name="phone" defaultValue={order?.phone} /></label>
     <label className="form-field"><span>Address <small>Arabic or English</small></span><input required name="address" defaultValue={order?.address} /></label>
-    <label className="form-field"><span>Google Maps location <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label>
+    <label className="form-field"><span>Google Maps link <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label>
     <label className="form-field"><span>Product or bundle</span><select name="product" defaultValue={order?.items[0]?.productId}>{products.map((product) => <option value={product.id} key={product.id}>{product.components ? 'Bundle: ' : ''}{product.name} — {money(product.price)}</option>)}</select></label>
     <div className="form-row"><label className="form-field"><span>Quantity</span><input name="quantity" type="number" min="1" defaultValue={order?.items[0]?.quantity || 1} /></label><label className="form-field"><span>Custom price <small>Optional</small></span><input name="price" type="number" defaultValue={order?.items[0]?.unitPrice} /></label></div>
     <div className="form-row"><label className="form-field"><span>Delivery person</span><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select></label><label className="form-field"><span>Delivery expense</span><input name="deliveryCharge" type="number" defaultValue={order?.deliveryCharge} /></label></div>
     <div className="form-row"><label className="form-field"><span>Order status</span><select name="status" defaultValue={order?.status || 'New'}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="form-field"><span>Payment status</span><select name="paymentStatus" defaultValue={order?.paymentStatus || 'Pay on delivery'}>{paymentStatuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
     <label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per confirmation</option>)}</select></label>
     <label className="form-field"><span>Other expense <small>Optional</small></span><input name="otherExpense" type="number" defaultValue={order?.otherExpense} /></label>
-    <label className="form-field"><span>Internal notes <small>Shown on the order card</small></span><textarea name="notes" defaultValue={order?.notes} /></label>
+    <label className="form-field"><span>Note</span><textarea name="notes" defaultValue={order?.notes} /></label>
     <button className="primary full">{submitLabel}</button>
   </form>
 }
 
 function OrderCard({ order, products, members, confirmationEmployees, onStatus, onEdit }: { order: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onStatus: (id: string, status: Status) => void; onEdit: (order: Order) => void }) {
-  const lines = order.items.map((item) => `${item.quantity}× ${products.find((p) => p.id === item.productId)?.name ?? 'Product'}`).join(', ')
+  const lines = order.items.map((item) => `${products.find((p) => p.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')
   const assignee = members.find(member => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
   const total = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
   const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId)
-  return <article className="order-card compact-order"><div className="compact-order-head"><div className="client-block"><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank">{order.phone} →</a></div><div className="order-head-actions">{order.locationUrl?.trim() && <a className="map-order" href={navigationUrl(order)} target="_blank" rel="noreferrer" title="Open in Google Maps">⌖</a>}<button className="edit-order" title="Edit order" onClick={() => onEdit(order)}>✎</button><select className={`status-picker ${order.status.toLowerCase().replaceAll(' ', '-')}`} aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div></div><p className="compact-items">{lines}</p><p className="compact-address">⌖ {order.address}</p>{order.notes?.trim() && <p className="compact-notes">Note: {order.notes}</p>}{confirmer && <p className="compact-confirmation">Confirmed by {confirmer.name} · {money(order.confirmationBonus ?? confirmer.bonus)}</p>}<div className="compact-meta"><span>◉ {assignee}</span><span>{order.paymentStatus}</span><b>{money(total)}</b></div></article>
+  const tone = order.status.toLowerCase().replaceAll(' ', '-')
+  return <article className={`order-row tone-${tone}`}><span className="status-rail"><i /></span><div className="order-primary"><div className="order-heading"><div><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}</a></div><div className="row-actions"><label className={`status-control tone-${tone}`}><StatusIcon status={order.status} /><select aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select><CaretDown /></label><button aria-label={`Edit ${order.client}`} onClick={() => onEdit(order)}><PencilSimple /></button></div></div><div className="address-line">{order.locationUrl?.trim() ? <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><span>{order.address}</span><ArrowSquareOut /><span className="map-mini"><MapPin /></span></a> : <span>{order.address}</span>}</div><p className="product-line">{lines}</p>{order.notes?.trim() && <p className="note-line"><NoteBlank /><span><b>Note:</b> {order.notes}</span></p>}<div className="order-meta"><span><Tag />{money(total)}</span><span><User />{assignee}</span>{confirmer && <span><UserCheck />Confirmed by {confirmer.name}</span>}</div></div></article>
 }
 
-function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) { return <button className={active ? 'nav-active' : ''} onClick={onClick}><NavIcon name={icon} />{label}</button> }
-function NavIcon({ name }: { name: 'orders' | 'inventory' | 'profit' | 'employees' | 'map' }) { const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }; return <svg viewBox="0 0 24 24" aria-hidden="true">{name === 'orders' && <><rect x="4" y="3.5" width="16" height="17" rx="2.5" {...common} /><path d="M8 8h8M8 12h8M8 16h5" {...common} /></>}{name === 'inventory' && <><path d="M4 8.5 12 4l8 4.5v8L12 21l-8-4.5z" {...common} /><path d="M4 8.5 12 13l8-4.5M12 13v8" {...common} /></>}{name === 'profit' && <><path d="M4 19.5V13m5 6.5V9m5 10.5V5m5 14.5v-8" {...common} /><path d="m4 9 5-3 5 2 6-4" {...common} /></>}{name === 'employees' && <><circle cx="9" cy="8" r="3" {...common} /><path d="M3.8 19c.8-3.2 2.5-4.8 5.2-4.8s4.4 1.6 5.2 4.8M16 8.5h4m-2-2v4" {...common} /></>}{name === 'map' && <><path d="m3.5 6 6-2.5 5 2.5 6-2.5v14l-6 2.5-5-2.5-6 2.5z" {...common} /><path d="M9.5 3.5v14m5-11.5v14" {...common} /></>}</svg> }
-function Metric({ label, value }: { label: string; value: string }) { return <article className="metric"><p>{label}</p><strong>{value}</strong></article> }
-function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button onClick={close}>×</button></div>{children}</section></div> }
+function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark: boolean; toggleTheme: () => void; actions?: ReactNode; back?: () => void }) { return <header className="ledger-header"><div className="ledger-title-wrap">{back && <button className="back-icon" aria-label="Go back" onClick={back}><ArrowLeft /></button>}<div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="header-actions"><button className="square-action theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Moon weight="fill" /> : <Sun />}</button>{actions}</div></header> }
+function StatusIcon({ status }: { status: Status }) { if (status === 'Out for delivery') return <Truck />; if (status === 'Delivered' || status === 'Confirmed') return <CheckCircle />; if (status === 'Cancelled') return <X />; if (status === 'Preparing') return <Package />; return <ClipboardText /> }
+function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) { const icons = { orders: <ClipboardText />, inventory: <Cube />, profit: <ChartBar />, employees: <UsersThree />, map: <MapPin /> }; return <button className={active ? 'active' : ''} onClick={onClick}>{icons[icon]}<span>{label}</span></button> }
+function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) { return <div className="profit-metric"><span>{icon}</span><div><p>{label}</p><strong>{value}</strong></div></div> }
+function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) { return <div className="empty-state"><span>{icon}</span><b>{title}</b><p>{copy}</p></div> }
+function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button aria-label="Close" onClick={close}><X /></button></div>{children}</section></div> }
 function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
 type Coordinates = { latitude: number; longitude: number }
 function mapCoordinates(locationUrl?: string): Coordinates | null {
@@ -478,10 +535,9 @@ function WorkspaceScreen({ onReady }: { onReady: () => Promise<void> }) {
   return <main className="gate"><p className="eyebrow">FIRST-TIME SETUP</p><h1>{mode === 'create' ? 'Create your shared workspace' : 'Join your partner'}</h1><p>{mode === 'create' ? 'You will receive a code to share with your friend.' : 'Enter the code shown in your partner’s app.'}</p><form className="form auth-form" onSubmit={submit}><label className="form-field"><span>{mode === 'create' ? 'Business name' : 'Workspace code'}</span><input name="value" required /></label><button className="primary full">{mode === 'create' ? 'Create workspace' : 'Join workspace'}</button></form><button className="link-button" onClick={() => setMode(mode === 'create' ? 'join' : 'create')}>{mode === 'create' ? 'I have a code' : 'I need to create one'}</button>{message && <p className="message">{message}</p>}</main>
 }
 
-function DeliveryMap({ orders }: { orders: Order[] }) {
+function DeliveryMap({ orders, dark }: { orders: Order[]; dark: boolean }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
-  const markerLayer = useRef<L.LayerGroup | null>(null);
   const fallbackLocation: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
   const [currentLocation, setCurrentLocation] = useState<Coordinates>(fallbackLocation);
   const [usingFallbackLocation, setUsingFallbackLocation] = useState(true);
@@ -508,31 +564,28 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
     if (!element.current) return;
     const points = [...resolvedOrders].sort((a, b) => distanceKm(currentLocation, a.coordinates) - distanceKm(currentLocation, b.coordinates));
 
-    if (!map.current) {
-      map.current = L.map(element.current, { zoomControl: false }).setView([currentLocation.latitude, currentLocation.longitude], 12);
-      L.control.zoom({ position: 'bottomright' }).addTo(map.current);
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
-    }
-
-    markerLayer.current?.remove();
+    map.current?.remove();
+    map.current = L.map(element.current, { zoomControl: false }).setView([currentLocation.latitude, currentLocation.longitude], 12);
+    L.control.zoom({ position: 'bottomright' }).addTo(map.current);
+    L.tileLayer(dark ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
     const layer = L.layerGroup().addTo(map.current);
-    markerLayer.current = layer;
+    const markerIcon = new L.Icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png', shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] });
     const currentLabel = usingFallbackLocation ? 'Hay El Majd (location permission unavailable)' : 'Your current location';
-    L.circleMarker([currentLocation.latitude, currentLocation.longitude], { radius: 11, color: '#fff8eb', weight: 3, fillColor: '#c85a45', fillOpacity: 1 })
+    L.marker([currentLocation.latitude, currentLocation.longitude], { icon: markerIcon })
       .bindPopup(`<strong>${currentLabel}</strong>`)
       .addTo(layer);
 
     points.forEach(({ order, coordinates }, index) => {
-      const icon = L.divIcon({ className: 'delivery-number-pin', html: `<span>${index + 1}</span>`, iconSize: [28, 28], iconAnchor: [14, 14] });
-      L.marker([coordinates.latitude, coordinates.longitude], { icon, zIndexOffset: 1000 })
-        .bindPopup(`<strong>${order.client}</strong><br>${order.address}<br><a href="${navigationUrl(order)}" target="_blank">Open in Google Maps ↗</a>`)
+      L.marker([coordinates.latitude, coordinates.longitude], { icon: markerIcon, zIndexOffset: 1000 })
+        .bindPopup(`<strong>${index + 1}. ${order.client}</strong><br>${order.address}<br><a href="${navigationUrl(order)}" target="_blank">Open in Google Maps</a>`)
         .addTo(layer);
     });
 
     const bounds: [number, number][] = [[currentLocation.latitude, currentLocation.longitude], ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
-    map.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14 });
-    return () => { layer.remove(); };
-  }, [resolvedOrders, currentLocation, usingFallbackLocation]);
+    map.current.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14, animate: false });
+    const invalidateTimer = window.setTimeout(() => map.current?.invalidateSize({ animate: false }), 100);
+    return () => { window.clearTimeout(invalidateTimer); const currentMap = map.current; map.current = null; currentMap?.stop(); currentMap?.remove(); };
+  }, [resolvedOrders, currentLocation, usingFallbackLocation, dark]);
 
-  return <><div ref={element} className="delivery-map" />{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
+  return <><div ref={element} className="map-canvas" />{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
 }
