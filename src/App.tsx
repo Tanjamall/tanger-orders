@@ -648,7 +648,6 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
   const acceptLocation = ({ coords }: GeolocationPosition) => {
     const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy };
     setCurrentLocation(location); setLocationStatus('available');
-    map.current?.flyTo([location.latitude, location.longitude], Math.max(map.current.getZoom(), 15), { animate: true, duration: .7 });
   };
   const rejectLocation = (error: GeolocationPositionError) => setLocationStatus(error.code === 1 ? 'denied' : 'unavailable');
   const requestCurrentLocation = () => {
@@ -659,8 +658,7 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
 
   useEffect(() => {
     if (!navigator.geolocation) { setLocationStatus('unavailable'); return; }
-    const watchId = navigator.geolocation.watchPosition(acceptLocation, rejectLocation, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 });
-    return () => navigator.geolocation.clearWatch(watchId);
+    navigator.geolocation.getCurrentPosition(acceptLocation, rejectLocation, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 });
   }, []);
 
   useEffect(() => {
