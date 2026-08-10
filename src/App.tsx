@@ -52,6 +52,13 @@ import { supabase } from './supabase'
 import type { Order, PaymentStatus, Product, Status } from './types'
 
 const statuses: Status[] = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
+const orderFilters: { label: string; value: Status | 'All' }[] = [
+  { label: 'All', value: 'All' },
+  { label: 'New', value: 'New' },
+  { label: 'Confirmed', value: 'Confirmed' },
+  { label: 'Delivered', value: 'Delivered' },
+  { label: 'Canceled', value: 'Cancelled' },
+]
 const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
 type ConfirmationEmployee = { id: string; name: string; bonus: number; active: boolean }
 const money = (value: number) => `${Math.round(value)} DH`
@@ -400,7 +407,10 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className={`square-action ${showSearch ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
       <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
-      <div className="filter-rail" aria-label="Filter orders by status">{([{ label: 'All', value: 'All' }, { label: 'New', value: 'New' }, { label: 'Confirmed', value: 'Confirmed' }, { label: 'Preparing', value: 'Preparing' }, { label: 'Delivery', value: 'Out for delivery' }, { label: 'Delivered', value: 'Delivered' }] as { label: string; value: Status | 'All' }[]).map((filter) => <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}>{filter.label}</button>)}</div>
+      <div className="filter-rail" aria-label="Filter orders by status">{orderFilters.map((filter) => {
+        const count = filter.value === 'All' ? selectedRangeOrders.length : selectedRangeOrders.filter((order) => order.status === filter.value).length
+        return <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}><span>{filter.label}</span><small>{count}</small></button>
+      })}</div>
       <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 

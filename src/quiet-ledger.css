@@ -92,7 +92,10 @@ button, a, select, label { -webkit-tap-highlight-color: transparent; }
 .filter-rail { display: flex; gap: 5px; margin: 0 -24px 22px; padding: 0 24px 4px; overflow-x: auto; scrollbar-width: none; }
 .filter-rail::-webkit-scrollbar { display: none; }
 .filter-rail button, .quick-range button { flex: 0 0 auto; padding: 7px 8px; border: 0; border-radius: 12px; background: var(--paper-soft); color: var(--ink); font-size: 9px; }
+.filter-rail button { display: inline-flex; align-items: center; gap: 5px; padding-right: 6px; }
+.filter-rail button small { display: grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--muted); font-size: 8px; font-weight: 700; line-height: 1; }
 .filter-rail button.selected, .quick-range button.selected { background: var(--pine); color: var(--paper-raised); }
+.filter-rail button.selected small { background: rgb(255 255 255 / 18%); color: inherit; }
 .ledger-section > h2 { margin: 0 0 12px 5px; color: var(--muted); font-size: 17px; font-weight: 500; }
 .range-ledger { display: grid; gap: 27px; }
 .order-day-group > h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 5px 5px; color: var(--muted); font-size: 16px; font-weight: 500; }
