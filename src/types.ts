@@ -18,7 +18,7 @@ export type InventoryBatch = {
   originalQuantity: number
   remainingQuantity: number
   receivedAt: string
-  source: 'opening_balance' | 'restock' | 'legacy_delivery'
+  source: 'opening_balance' | 'restock' | 'legacy_delivery' | 'correction'
 }
 
 export type OrderItem = { productId: string; quantity: number; unitPrice: number; costTotal?: number }

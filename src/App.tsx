@@ -197,7 +197,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('id, display_name'),
       supabase.from('confirmation_employees').select('*').order('created_at'),
-      supabase.from('inventory_batches').select('*').in('source', ['opening_balance', 'restock']).order('received_at', { ascending: false }),
+      supabase.from('inventory_batches').select('*').in('source', ['opening_balance', 'restock', 'correction']).order('received_at', { ascending: false }),
     ])
     if (productRows.error || orderRows.error || employeeRows.error || batchRows.error) { setNotice(`Could not load shared data: ${(productRows.error || orderRows.error || employeeRows.error || batchRows.error)?.message}`); return }
     setWorkspaceCode(workspace.data?.join_code ?? null); setMembers(profileRows.data ?? [])
@@ -348,10 +348,45 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   async function updateProduct(form: HTMLFormElement) {
     if (!editingProduct) return
     const values = new FormData(form)
-    const updated: Product = { ...editingProduct, name: String(values.get('name')), price: Number(values.get('price')) || 0, lowStockAt: Number(values.get('lowStockAt')) || 0 }
-    setProducts((all) => all.map((product) => product.id === updated.id ? updated : product))
-    if (supabase && workspaceId) { const { error } = await supabase.from('products').update({ name: updated.name, price: updated.price, low_stock_at: updated.lowStockAt }).eq('id', updated.id); if (error) setNotice(error.message) }
+    const correctedStock = editingProduct.components ? editingProduct.stock : Math.max(0, Math.floor(Number(values.get('stock')) || 0))
+    const correctedCost = editingProduct.components ? editingProduct.cost : Math.max(0, Number(values.get('cost')) || 0)
+    const updated: Product = { ...editingProduct, name: String(values.get('name')), cost: correctedCost, price: Number(values.get('price')) || 0, stock: correctedStock, lowStockAt: Number(values.get('lowStockAt')) || 0 }
+    const inventoryChanged = !editingProduct.components && (correctedStock !== editingProduct.stock || correctedCost !== editingProduct.cost)
+
+    if (!devDemo && supabase && workspaceId) {
+      if (inventoryChanged) {
+        const { error } = await supabase.rpc('correct_product_inventory', {
+          target_product_id: updated.id,
+          corrected_stock: updated.stock,
+          corrected_active_cost: updated.cost,
+          correction_note: String(values.get('correctionNote') || ''),
+        })
+        if (error) { setNotice(error.message); return }
+      }
+      const { error } = await supabase.from('products').update({ name: updated.name, price: updated.price, low_stock_at: updated.lowStockAt }).eq('id', updated.id)
+      if (error) { setNotice(error.message); await loadCloud(); return }
+      await loadCloud()
+    } else {
+      if (inventoryChanged) {
+        setInventoryBatches((all) => {
+          const next = all.map((batch) => ({ ...batch }))
+          const active = next.filter((batch) => batch.productId === updated.id && batch.remainingQuantity > 0).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id))[0]
+          if (active) active.unitCost = updated.cost
+          const delta = updated.stock - editingProduct.stock
+          if (delta > 0) {
+            next.push({ id: uid(), productId: updated.id, unitCost: updated.cost, originalQuantity: delta, remainingQuantity: delta, receivedAt: new Date().toISOString(), source: 'correction' })
+          } else if (delta < 0) {
+            let toRemove = -delta
+            const newest = next.filter((batch) => batch.productId === updated.id && batch.remainingQuantity > 0).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt) || b.id.localeCompare(a.id))
+            newest.forEach((batch) => { const removed = Math.min(toRemove, batch.remainingQuantity); batch.remainingQuantity -= removed; toRemove -= removed })
+          }
+          return next
+        })
+      }
+      setProducts((all) => all.map((product) => product.id === updated.id ? updated : product))
+    }
     setEditingProduct(null)
+    setNotice(inventoryChanged ? `${updated.name} corrected. Existing delivered-order costs were not changed.` : `${updated.name} updated.`)
   }
 
   async function deleteProduct(product: Product) {
@@ -501,7 +536,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
     {showConfirmationTeam && <Modal title="Confirmation team" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Add your confirmation staff here. Admin confirmations are always recorded with no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Bonus per confirmed order (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Product name</span><input required name="name" /></label><div className="form-row"><label className="form-field"><span>Buying cost</span><input required name="cost" type="number" /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" /></label></div><div className="form-row"><label className="form-field"><span>Opening stock</span><input required name="stock" type="number" /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue="3" /></label></div><button className="primary full">Save product</button></form></Modal>}
-    {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Name</span><input required name="name" defaultValue={editingProduct.name} /></label>{!editingProduct.components && <div className="inventory-edit-fifo"><div><span>In stock</span><strong>{editingProduct.stock}</strong></div><div><span>Active FIFO cost</span><strong>{money(editingProduct.cost)}</strong></div><p>Use Restock to add units or introduce a new buying cost.</p></div>}<div className="form-row"><label className="form-field"><span>Selling price</span><input required name="price" type="number" min="0" step="0.01" defaultValue={editingProduct.price} /></label>{!editingProduct.components && <label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" min="0" defaultValue={editingProduct.lowStockAt} /></label>}</div><button className="primary full">Save changes</button></form></Modal>}
+    {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Name</span><input required name="name" defaultValue={editingProduct.name} /></label>{!editingProduct.components && <><div className="form-row"><label className="form-field"><span>Stock</span><input required name="stock" type="number" min="0" step="1" defaultValue={editingProduct.stock} /></label><label className="form-field"><span>Active FIFO cost</span><input required name="cost" type="number" min="0" step="0.01" defaultValue={editingProduct.cost} /></label></div><label className="form-field"><span>Correction note <small>Optional</small></span><input name="correctionNote" placeholder="e.g. Restock quantity typo" /></label><p className="form-note">Corrections apply only to unsold stock. Delivered-order costs stay unchanged.</p></>}<div className="form-row"><label className="form-field"><span>Selling price</span><input required name="price" type="number" min="0" step="0.01" defaultValue={editingProduct.price} /></label>{!editingProduct.components && <label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" min="0" defaultValue={editingProduct.lowStockAt} /></label>}</div><button className="primary full">Save changes</button></form></Modal>}
     {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost) => restockProduct(restockingProduct, quantity, unitCost)} />}
     {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
     {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank"><NavigationArrow />Navigate</a></article>)}</div></Modal>}
@@ -520,7 +555,7 @@ function RestockModal({ product, batches, close, onSubmit }: { product: Product;
       <section className="restock-summary"><div><span>Current stock</span><strong>{product.stock}</strong></div><i /><div><span>Active FIFO cost</span><strong>{money(product.cost)}</strong></div></section>
       <div className="form-row"><label className="form-field"><span>Quantity received</span><input required type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(Math.max(0, Number(event.target.value)))} /></label><label className="form-field"><span>Buying cost per unit</span><input required type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(Math.max(0, Number(event.target.value)))} /></label></div>
       <section className={`fifo-preview ${queuedCost ? 'cost-queued' : ''}`}><ArrowsClockwise /><div><b>{product.stock + quantity} units after restock</b><p>{queuedCost ? `${product.stock} existing units will keep their earlier costs. The ${money(unitCost)} cost starts only after they are sold.` : product.stock > 0 ? `This batch joins the queue behind ${product.stock} existing units.` : `The ${money(unitCost)} cost becomes active immediately.`}</p></div><strong>{money(quantity * unitCost)}</strong></section>
-      {recentBatches.length > 0 && <section className="batch-history"><header><span>Recent stock batches</span><small>Oldest costs are used first</small></header>{recentBatches.map((batch) => <article key={batch.id}><div><b>{batch.source === 'opening_balance' ? 'Opening stock' : 'Restock'}</b><span>{shortDate(dateKey(batch.receivedAt))}</span></div><strong>{batch.remainingQuantity}/{batch.originalQuantity}</strong><em>@ {money(batch.unitCost)}</em></article>)}</section>}
+      {recentBatches.length > 0 && <section className="batch-history"><header><span>Recent stock batches</span><small>Oldest costs are used first</small></header>{recentBatches.map((batch) => <article key={batch.id}><div><b>{batch.source === 'opening_balance' ? 'Opening stock' : batch.source === 'correction' ? 'Stock correction' : 'Restock'}</b><span>{shortDate(dateKey(batch.receivedAt))}</span></div><strong>{batch.remainingQuantity}/{batch.originalQuantity}</strong><em>@ {money(batch.unitCost)}</em></article>)}</section>}
       <button className="primary full" disabled={busy || quantity <= 0}>{busy ? 'Adding stock…' : `Add ${quantity} ${quantity === 1 ? 'unit' : 'units'}`}</button>
     </form>
   </Modal>
