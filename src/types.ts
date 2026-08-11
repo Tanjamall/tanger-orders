@@ -11,7 +11,17 @@ export type Product = {
   components?: { productId: string; quantity: number }[]
 }
 
-export type OrderItem = { productId: string; quantity: number; unitPrice: number }
+export type InventoryBatch = {
+  id: string
+  productId: string
+  unitCost: number
+  originalQuantity: number
+  remainingQuantity: number
+  receivedAt: string
+  source: 'opening_balance' | 'restock' | 'legacy_delivery'
+}
+
+export type OrderItem = { productId: string; quantity: number; unitPrice: number; costTotal?: number }
 export type Order = {
   id: string
   client: string
