@@ -36,7 +36,7 @@ create table public.orders (
   address text not null,
   location_url text,
   items jsonb not null check (jsonb_typeof(items) = 'array'),
-  status text not null default 'New' check (status in ('New','Confirmed','Preparing','Out for delivery','Delivered','Cancelled')),
+  status text not null default 'New' check (status in ('New','Confirmed','Out for delivery','Delivered','Canceled')),
   payment_status text not null default 'Pay on delivery' check (payment_status in ('Pay on delivery','Paid','Unpaid')),
   assigned_to uuid references public.profiles on delete set null,
   delivery_charge numeric(12,2) not null default 0 check (delivery_charge >= 0),
@@ -123,5 +123,13 @@ begin
   new.updated_at = now(); return new;
 end; $$;
 create trigger apply_order_delivery_stock before insert or update on public.orders for each row execute procedure private.apply_delivery_stock();
+
+create or replace function private.prevent_delivered_order_deletion() returns trigger language plpgsql set search_path = public as $$
+begin
+  if old.status = 'Delivered' then raise exception 'Delivered orders cannot be deleted because their stock cannot be restored'; end if;
+  return old;
+end; $$;
+revoke all on function private.prevent_delivered_order_deletion() from public;
+create trigger prevent_delivered_order_deletion before delete on public.orders for each row execute function private.prevent_delivered_order_deletion();
 
 alter publication supabase_realtime add table public.products, public.orders;

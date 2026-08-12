@@ -51,19 +51,17 @@ import { initialOrders, initialProducts, people } from './data'
 import { supabase } from './supabase'
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
 
-const statuses: Status[] = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
+const statuses: Status[] = ['New', 'Confirmed', 'Out for delivery', 'Delivered', 'Canceled']
 const orderFilters: { label: string; value: Status | 'All' }[] = [
   { label: 'All', value: 'All' },
-  { label: 'New', value: 'New' },
-  { label: 'Confirmed', value: 'Confirmed' },
-  { label: 'Delivered', value: 'Delivered' },
-  { label: 'Canceled', value: 'Cancelled' },
+  ...statuses.map((status) => ({ label: status, value: status })),
 ]
 const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
 type ConfirmationEmployee = { id: string; name: string; bonus: number; active: boolean }
 const money = (value: number) => `${Math.round(value)} DH`
 const uid = () => crypto.randomUUID()
-const isConfirmedOrder = (status: Status) => ['Confirmed', 'Preparing', 'Out for delivery', 'Delivered'].includes(status)
+const isConfirmedOrder = (status: Status) => ['Confirmed', 'Out for delivery', 'Delivered'].includes(status)
+const normalizeStatus = (status: string): Status => status === 'Preparing' ? 'Confirmed' : status === 'Cancelled' ? 'Canceled' : status as Status
 const dateKey = (value: Date | string) => { const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 const monthStartKey = () => { const today = new Date(); return dateKey(new Date(today.getFullYear(), today.getMonth(), 1)) }
 const monthEndKey = (value = new Date()) => dateKey(new Date(value.getFullYear(), value.getMonth() + 1, 0))
@@ -137,7 +135,10 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [dark, setDark] = useState(() => localStorage.getItem('quiet-ledger-theme') === 'dark')
   const [orderRange, setOrderRange] = useState<DateRange>(() => ({ start: monthStartKey(), end: monthEndKey() }))
   const [showOrderCalendar, setShowOrderCalendar] = useState(false)
-  const [orders, setOrders] = useState<Order[]>(() => devDemo ? initialOrders : JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders)
+  const [orders, setOrders] = useState<Order[]>(() => {
+    const stored = devDemo ? initialOrders : JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders
+    return stored.map((order: Order) => ({ ...order, status: normalizeStatus(order.status) }))
+  })
   const [products, setProducts] = useState<Product[]>(() => devDemo ? initialProducts : JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
   const [inventoryBatches, setInventoryBatches] = useState<InventoryBatch[]>(() => openingBatches(initialProducts))
   const [query, setQuery] = useState('')
@@ -206,7 +207,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
     setConfirmationEmployees(employeeRows.data.map((row: any) => ({ id: row.id, name: row.name, bonus: Number(row.bonus_per_confirmation), active: row.active })))
     setInventoryBatches(batchRows.data.map((row: any) => ({ id: row.id, productId: row.product_id, unitCost: Number(row.unit_cost), originalQuantity: row.original_quantity, remainingQuantity: row.remaining_quantity, receivedAt: row.received_at, source: row.source })))
-    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: row.status, paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, confirmationEmployeeId: row.confirmation_employee_id ?? undefined, confirmationBonus: Number(row.confirmation_bonus ?? 0), confirmedAt: row.confirmed_at ?? undefined })))
+    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: normalizeStatus(row.status), paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, confirmationEmployeeId: row.confirmation_employee_id ?? undefined, confirmationBonus: Number(row.confirmation_bonus ?? 0), confirmedAt: row.confirmed_at ?? undefined })))
     setNotice('Live shared data is connected.')
   }
   useEffect(() => { void loadCloud() }, [session])
@@ -268,6 +269,18 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationBonus = currentOrder?.confirmationBonus ?? (employee?.bonus || 0)
     setOrders((all) => all.map((order) => order.id === id ? { ...order, status, deliveredAt, confirmedAt, confirmationBonus } : order))
     if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null, confirmed_at: confirmedAt ?? null, confirmation_bonus: confirmationBonus }).eq('id', id); if (error) setNotice(error.message) }
+  }
+
+  const deleteOrder = async (order: Order) => {
+    if (order.status === 'Delivered') { setNotice('Delivered orders cannot be deleted because their stock cannot be restored.'); return }
+    if (!window.confirm(`Delete the order for “${order.client}”? This cannot be undone.`)) return
+    if (supabase && workspaceId) {
+      const { error } = await supabase.from('orders').delete().eq('id', order.id).eq('workspace_id', workspaceId)
+      if (error) { setNotice(`Could not delete the order: ${error.message}`); return }
+    }
+    setOrders((all) => all.filter((item) => item.id !== order.id))
+    if (editingOrder?.id === order.id) setEditingOrder(null)
+    setNotice(`Order for ${order.client} deleted.`)
   }
 
   async function addOrder(form: HTMLFormElement) {
@@ -454,7 +467,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   }
 
   async function planRoute() {
-    const deliveries = orders.filter((order) => ['Confirmed', 'Preparing', 'Out for delivery'].includes(order.status) && Boolean(order.locationUrl?.trim()))
+    const deliveries = orders.filter((order) => ['Confirmed', 'Out for delivery'].includes(order.status) && Boolean(order.locationUrl?.trim()))
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
     if (!navigator.geolocation) { setRouteError('Location is not available on this phone.'); setShowRoutePlan(true); return }
     setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
@@ -485,7 +498,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         const count = filter.value === 'All' ? selectedRangeOrders.length : selectedRangeOrders.filter((order) => order.status === filter.value).length
         return <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}><span>{filter.label}</span><small>{count}</small></button>
       })}</div>
-      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
+      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
     {tab === 'inventory' && <section className="page">
@@ -525,7 +538,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     </div></div>}
 
-    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Cancelled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
+    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
 
     <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders' || tab === 'settings'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
     {tab === 'orders' && <button className="ledger-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
@@ -579,13 +592,15 @@ function OrderForm({ order, products, members, confirmationEmployees, onSubmit, 
   </form>
 }
 
-function OrderCard({ order, products, members, confirmationEmployees, onStatus, onEdit }: { order: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onStatus: (id: string, status: Status) => void; onEdit: (order: Order) => void }) {
+function OrderCard({ order, products, members, confirmationEmployees, onStatus, onEdit, onDelete }: { order: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onStatus: (id: string, status: Status) => void; onEdit: (order: Order) => void; onDelete: (order: Order) => void }) {
   const lines = order.items.map((item) => `${products.find((p) => p.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')
   const assignee = members.find(member => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
   const total = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
   const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId)
   const tone = order.status.toLowerCase().replaceAll(' ', '-')
-  return <article className={`order-row tone-${tone}`}><span className="status-rail"><i /></span><div className="order-primary"><div className="order-heading"><div><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}</a></div><div className="row-actions"><label className={`status-control tone-${tone}`}><StatusIcon status={order.status} /><select aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select><CaretDown /></label><button aria-label={`Edit ${order.client}`} onClick={() => onEdit(order)}><PencilSimple /></button></div></div><div className="address-line">{order.locationUrl?.trim() ? <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><span>{order.address}</span><ArrowSquareOut /><span className="map-mini"><MapPin /></span></a> : <span>{order.address}</span>}</div><p className="product-line">{lines}</p>{order.notes?.trim() && <p className="note-line"><NoteBlank /><span><b>Note:</b> {order.notes}</span></p>}<div className="order-meta"><span><Tag />{money(total)}</span><span><User />{assignee}</span>{confirmer && <span><UserCheck />Confirmed by {confirmer.name}</span>}</div></div></article>
+  const deleteDisabled = order.status === 'Delivered'
+  const deleteLabel = deleteDisabled ? 'Delivered orders cannot be deleted because their stock cannot be restored' : `Delete order for ${order.client}`
+  return <article className={`order-row tone-${tone}`}><span className="status-rail"><i /></span><div className="order-primary"><div className="order-heading"><div><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}</a></div><div className="row-actions"><label className={`status-control tone-${tone}`}><StatusIcon status={order.status} /><select aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select><CaretDown /></label><button aria-label={`Edit ${order.client}`} onClick={() => onEdit(order)}><PencilSimple /></button><button className="danger-icon" aria-label={deleteLabel} title={deleteLabel} disabled={deleteDisabled} onClick={() => onDelete(order)}><Trash /></button></div></div><div className="address-line">{order.locationUrl?.trim() ? <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><span>{order.address}</span><ArrowSquareOut /><span className="map-mini"><MapPin /></span></a> : <span>{order.address}</span>}</div><p className="product-line">{lines}</p>{order.notes?.trim() && <p className="note-line"><NoteBlank /><span><b>Note:</b> {order.notes}</span></p>}<div className="order-meta"><span><Tag />{money(total)}</span><span><User />{assignee}</span>{confirmer && <span><UserCheck />Confirmed by {confirmer.name}</span>}</div></div></article>
 }
 
 function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark?: boolean; toggleTheme?: () => void; actions?: ReactNode; back?: () => void }) { return <header className="ledger-header"><div className="ledger-title-wrap">{back && <button className="back-icon" aria-label="Go back" onClick={back}><ArrowLeft /></button>}<div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="header-actions">{typeof dark === 'boolean' && toggleTheme && <button className="square-action theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Moon weight="fill" /> : <Sun />}</button>}{actions}</div></header> }
@@ -643,7 +658,7 @@ function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onCha
     </section>
   </div>
 }
-function StatusIcon({ status }: { status: Status }) { if (status === 'Out for delivery') return <Truck />; if (status === 'Delivered' || status === 'Confirmed') return <CheckCircle />; if (status === 'Cancelled') return <X />; if (status === 'Preparing') return <Package />; return <ClipboardText /> }
+function StatusIcon({ status }: { status: Status }) { if (status === 'Out for delivery') return <Truck />; if (status === 'Delivered' || status === 'Confirmed') return <CheckCircle />; if (status === 'Canceled') return <X />; return <ClipboardText /> }
 function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) { const icons = { orders: <ClipboardText />, inventory: <Cube />, profit: <ChartBar />, employees: <UsersThree />, map: <MapPin /> }; return <button className={active ? 'active' : ''} onClick={onClick}>{icons[icon]}<span>{label}</span></button> }
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) { return <div className="profit-metric"><span>{icon}</span><div><p>{label}</p><strong>{value}</strong></div></div> }
 function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) { return <div className="empty-state"><span>{icon}</span><b>{title}</b><p>{copy}</p></div> }

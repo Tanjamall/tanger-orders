@@ -108,8 +108,7 @@ button:active { transform: scale(.96); }
 .order-row { --tone: var(--amber); position: relative; display: grid; grid-template-columns: 9px minmax(0, 1fr); gap: 10px; min-width: 0; padding: 16px 0 15px; border-bottom: 1px solid var(--line); }
 .order-row.tone-out-for-delivery { --tone: var(--orange); }
 .order-row.tone-delivered { --tone: #43ad98; }
-.order-row.tone-cancelled { --tone: var(--coral); }
-.order-row.tone-preparing { --tone: #8d74bd; }
+.order-row.tone-canceled { --tone: var(--coral); }
 .order-row.tone-new { --tone: #7e8994; }
 .status-rail { position: relative; width: 2px; min-height: 100%; margin-left: 3px; background: var(--tone); }
 .status-rail i { position: absolute; top: 0; left: 50%; width: 10px; height: 10px; border: 2px solid var(--paper); border-radius: 50%; background: var(--tone); transform: translate(-50%, -40%); }
@@ -120,12 +119,12 @@ button:active { transform: scale(.96); }
 .row-actions { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .row-actions > button, .inventory-row-actions button, .team-list button { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; border: 0; background: transparent; color: var(--ink); }
 .row-actions svg, .inventory-row-actions svg, .team-list button svg { width: 18px; height: 18px; }
+.row-actions > button:disabled { cursor: not-allowed; opacity: .3; transform: none; }
 .status-control { display: flex; align-items: center; gap: 5px; min-width: 0; height: 31px; padding: 0 8px; border: 1px solid var(--tone, var(--line)); border-radius: 10px; color: var(--ink); background: var(--paper-raised); }
 .status-control.tone-out-for-delivery { --tone: var(--orange); }
 .status-control.tone-confirmed { --tone: var(--amber); }
 .status-control.tone-delivered { --tone: #43ad98; background: var(--mint); }
-.status-control.tone-cancelled { --tone: var(--coral); }
-.status-control.tone-preparing { --tone: #8d74bd; }
+.status-control.tone-canceled { --tone: var(--coral); }
 .status-control > svg { width: 17px; height: 17px; flex: 0 0 auto; }
 .status-control select { min-width: 0; max-width: 110px; border: 0; outline: 0; appearance: none; background: transparent; color: inherit; font-size: 10px; }
 .status-control select option { color: #1d2b25; }
