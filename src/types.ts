@@ -1,4 +1,4 @@
-export type Status = 'New' | 'Confirmed' | 'Preparing' | 'Out for delivery' | 'Delivered' | 'Cancelled'
+export type Status = 'New' | 'Confirmed' | 'Out for delivery' | 'Delivered' | 'Canceled'
 export type PaymentStatus = 'Pay on delivery' | 'Paid' | 'Unpaid'
 
 export type Product = {
