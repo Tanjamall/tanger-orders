@@ -13,6 +13,7 @@ import {
   Copy,
   Cube,
   GearSix,
+  LockKey,
   MagnifyingGlass,
   NavigationArrow,
   NoteBlank,
@@ -77,15 +78,41 @@ export default function App() {
   const devDemo = import.meta.env.DEV && new URLSearchParams(window.location.search).get('demo') === '1'
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(Boolean(supabase))
+  const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecoveryUrl)
   useEffect(() => {
     if (!supabase) return
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) })
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setLoading(false) })
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
+      setSession(nextSession)
+      setLoading(false)
+    })
     return () => listener.subscription.unsubscribe()
   }, [])
   if (!devDemo && loading) return <div className="gate">Connecting to Tanger Orders…</div>
+  function finishPasswordRecovery() {
+    setPasswordRecovery(false)
+    clearPasswordRecoveryUrl()
+  }
+  if (!devDemo && passwordRecovery && supabase && session) return <PasswordRecoveryScreen onComplete={finishPasswordRecovery} />
+  if (!devDemo && passwordRecovery && supabase && !session) return <RecoveryLinkError onBack={finishPasswordRecovery} />
   if (!devDemo && supabase && !session) return <AuthScreen />
   return <OrderApp session={session} devDemo={devDemo} />
+}
+
+function isPasswordRecoveryUrl() {
+  const query = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  return query.get('type') === 'recovery' || hash.get('type') === 'recovery'
+}
+
+function clearPasswordRecoveryUrl() {
+  const url = new URL(window.location.href)
+  url.hash = ''
+  url.searchParams.delete('type')
+  url.searchParams.delete('code')
+  url.searchParams.delete('token_hash')
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}`)
 }
 
 function OrderApp({ session, devDemo }: { session: Session | null; devDemo: boolean }) {
@@ -636,6 +663,59 @@ async function resolveLocation(locationUrl?: string): Promise<LocationResolution
   } catch { return { locationUrl } }
 }
 function distanceKm(first: Coordinates, second: Coordinates) { const radians = (value: number) => value * Math.PI / 180; const deltaLatitude = radians(second.latitude - first.latitude); const deltaLongitude = radians(second.longitude - first.longitude); const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(deltaLongitude / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
+
+function PasswordRecoveryScreen({ onComplete }: { onComplete: () => void }) {
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [updated, setUpdated] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || saving) return
+    const values = new FormData(event.currentTarget)
+    const password = String(values.get('password') || '')
+    const confirmation = String(values.get('password-confirmation') || '')
+    if (password !== confirmation) { setMessage('The passwords do not match.'); return }
+    setSaving(true)
+    setMessage('')
+    const { error } = await supabase.auth.updateUser({ password })
+    setSaving(false)
+    if (error) { setMessage(error.message); return }
+    clearPasswordRecoveryUrl()
+    setUpdated(true)
+  }
+
+  if (updated) return <main className="gate recovery-gate recovery-success">
+    <div className="recovery-icon"><CheckCircle weight="fill" /></div>
+    <p className="eyebrow">ACCOUNT RECOVERY</p>
+    <h1>Password updated</h1>
+    <p>Your new password is ready. You can continue securely to Tanger Orders.</p>
+    <button className="primary full" type="button" onClick={onComplete}>Continue to orders</button>
+  </main>
+
+  return <main className="gate recovery-gate">
+    <div className="recovery-icon"><LockKey weight="duotone" /></div>
+    <p className="eyebrow">ACCOUNT RECOVERY</p>
+    <h1>Set a new password</h1>
+    <p>Choose a password you have not used before. Your account is temporarily signed in only so this change can be completed.</p>
+    <form className="form auth-form" onSubmit={submit}>
+      <label className="form-field"><span>New password <small>6+ characters</small></span><input name="password" type="password" minLength={6} autoComplete="new-password" required autoFocus /></label>
+      <label className="form-field"><span>Confirm new password</span><input name="password-confirmation" type="password" minLength={6} autoComplete="new-password" required /></label>
+      <button className="primary full" disabled={saving}>{saving ? 'Updating password...' : 'Update password'}</button>
+    </form>
+    {message && <p className="message recovery-error" role="alert">{message}</p>}
+  </main>
+}
+
+function RecoveryLinkError({ onBack }: { onBack: () => void }) {
+  return <main className="gate recovery-gate">
+    <div className="recovery-icon recovery-icon-error"><WarningCircle weight="duotone" /></div>
+    <p className="eyebrow">ACCOUNT RECOVERY</p>
+    <h1>Recovery link expired</h1>
+    <p>This link is invalid or has already been used. Request a fresh recovery email, then open its newest link.</p>
+    <button className="primary full" type="button" onClick={onBack}>Return to sign in</button>
+  </main>
+}
 
 function AuthScreen() {
   const [signUp, setSignUp] = useState(false); const [message, setMessage] = useState('')

@@ -382,6 +382,13 @@ button:active { transform: scale(.96); }
 .gate .form-field input { color: #192821; background: #fffdf8; border-color: #e2ddd2; }
 .link-button { margin-top: 15px; padding: 0; border: 0; background: transparent; color: #005442; font-weight: 700; }
 .message { margin-top: 14px; color: #746f5c; font-size: 11px; }
+.recovery-gate { margin-top: 8vh; padding: 34px; border: 1px solid #e2ddd2; border-radius: 22px; background: #fffdf8; box-shadow: 0 24px 70px rgb(22 42 33 / 12%); }
+.recovery-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 22px; border-radius: 16px; background: #e4f4ef; color: #005442; }
+.recovery-icon svg { width: 27px; height: 27px; }
+.recovery-icon-error { background: #fff0ec; color: #c84d3f; }
+.recovery-gate .primary { margin-top: 4px; min-height: 46px; }
+.recovery-success .primary { margin-top: 24px; }
+.recovery-error { color: #b74034; }
 
 .page > .ledger-header { animation: heading-enter .46s cubic-bezier(.22, .8, .28, 1) both; }
 .page > :not(.ledger-header):not(.search-field) { animation: content-enter .44s .05s cubic-bezier(.22, .8, .28, 1) both; }
