@@ -71,3 +71,73 @@
 - P3: Leaflet standard markers differ from the mock's numbered markers, intentionally avoiding custom-drawn assets while preserving map functionality.
 
 final result: passed
+
+---
+
+# Desktop operations ledger design QA
+
+**Source visual truth**
+
+- Selected Product Design option: `C:\Users\SAEED\.codex\generated_images\019ff54c-bb02-7760-a394-38277c7fef28\exec-b7bfb21e-2e42-4ceb-9ef8-7661f3f082af.png`
+
+**Implementation evidence**
+
+- Local preview state: `http://127.0.0.1:4173/?demo=1`
+- Browser-rendered implementation: `C:\Users\SAEED\Documents\ORDERS TRACKING\.codex-desktop-implementation.png`
+- Full-view combined comparison: `C:\Users\SAEED\Documents\ORDERS TRACKING\.codex-desktop-qa-comparison.png`
+- Focused order-detail comparison: `C:\Users\SAEED\Documents\ORDERS TRACKING\.codex-desktop-qa-detail-comparison.png`
+
+**Viewport and normalization**
+
+- Requested browser viewport: 1440 × 1024; in-app browser content viewport: 1346 × 957 CSS px.
+- Device scale factor: 1.
+- Source: 1440 × 1024 pixels. Implementation: 1346 × 957 pixels.
+- For direct comparison, the implementation was normalized to 1440 × 1024. The source and implementation aspect ratios differ by less than 0.02%, so no material crop was introduced.
+- State: light theme, All status filter, empty search, selected Out for delivery order, development fixture data.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: Fraunces and Manrope match the source's editorial/display split. Desktop table labels, row metadata, status controls, and detail-pane type were enlarged after comparison so important content remains legible at the target density.
+- Spacing and layout rhythm: the persistent sidebar, 100px command header, four-part summary band, status filters, seven-column ledger, pagination, and contextual detail pane follow the selected composition. Fixed desktop regions scale down proportionally within the in-app browser's smaller content viewport.
+- Colors and visual tokens: the existing paper, pine, mint, amber, orange, coral, and line tokens map directly to the source. Status and payment treatments preserve semantic contrast in both themes.
+- Image quality and asset fidelity: the target contains no raster product imagery or custom brand artwork. All interface symbols use the installed Phosphor icon library; no placeholder drawings or handcrafted SVGs were introduced.
+- Copy and content: the desktop surface uses the real app's five statuses—New, Confirmed, Out for delivery, Delivered, and Canceled—plus All. Delivered orders expose a disabled delete control and the stock-restoration explanation.
+
+**Comparison history**
+
+1. Initial pass found P2 drift in the summary band, compact date control, and ledger row hierarchy. Added summary icons/subcopy, a bordered range control, customer/assignee avatars, addresses, SKU metadata, and responsive fixed-region sizing.
+2. Second pass found P2 drift in the contextual pane: it started too low, its type was too small, and edit/delete actions were arranged side by side. Raised the pane to align with the filter band, strengthened its typography, and stacked the full-width actions to match the source.
+3. Final full-view and focused comparisons show the source hierarchy and proportions preserved. Remaining content differences come from the real three-order fixture versus the mock's eight-order fixture and are not design drift.
+
+**Primary interactions tested**
+
+- Desktop sidebar navigation presence and responsive switch back to the existing mobile navigation at 365 × 789 CSS px.
+- Search filtering and clearing.
+- All, New, Confirmed, Out for delivery, Delivered, and Canceled filter availability.
+- Order status selector options exactly match the approved status set.
+- Delivered-order selection disables deletion and shows the inventory-restoration explanation.
+- Edit order opens and closes the real edit modal.
+- Pagination controls and selected-row/detail-pane synchronization.
+- No horizontal overflow at the tested mobile breakpoint.
+- Browser console checked: no errors.
+
+**Open Questions**
+
+- None blocking. The mock contains richer fixture addresses and eight rows; production data remains the source of truth, and the ledger paginates at eight orders per page.
+
+**Implementation Checklist**
+
+- [x] Match selected desktop visual direction.
+- [x] Preserve real order data and Supabase actions.
+- [x] Keep the existing mobile UI below the desktop breakpoint.
+- [x] Verify delivered-order deletion protection.
+- [x] Verify core desktop interactions and console output.
+- [x] Pass TypeScript and production build.
+
+**Follow-up Polish**
+
+- P3: Very short development IDs render as `#O1`; production UUIDs render a longer identifier.
+- P3: Payment remains the real app's payment status rather than the mock's payment-method fixture.
+
+final result: passed

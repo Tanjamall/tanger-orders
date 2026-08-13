@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check": "tsc -p tsconfig.app.json --noUnusedLocals --noUnusedParameters --pretty false",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },

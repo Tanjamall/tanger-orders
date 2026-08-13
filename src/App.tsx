@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
-  ArrowLeft,
-  ArrowSquareOut,
   ArrowsClockwise,
   Buildings,
   CalendarBlank,
@@ -16,8 +14,6 @@ import {
   Cube,
   GearSix,
   MagnifyingGlass,
-  MapPin,
-  Moon,
   NavigationArrow,
   NoteBlank,
   Package,
@@ -28,10 +24,8 @@ import {
   Plus,
   SignOut,
   Stack,
-  Sun,
   Tag,
   Trash,
-  Truck,
   User,
   UserCheck,
   UserPlus,
@@ -47,70 +41,37 @@ import '@fontsource/manrope/400.css'
 import '@fontsource/manrope/500.css'
 import '@fontsource/manrope/600.css'
 import '@fontsource/manrope/700.css'
-import { initialOrders, initialProducts, people } from './data'
+import { EmptyState, Metric, Modal, NavButton, PageHeader } from './components/ui'
+import { initialOrders, initialProducts } from './data'
+import { DesktopOrdersView, DesktopSidebar } from './features/orders/DesktopOrders'
+import { OrderCard, OrderForm } from './features/orders/OrderComponents'
+import {
+  bundleStock,
+  dateKey,
+  dateStamp,
+  isConfirmedOrder,
+  isWholeMonth,
+  itemCost,
+  longDate,
+  money,
+  monthEndKey,
+  monthLabel,
+  monthStartKey,
+  navigationUrl,
+  normalizedRange,
+  normalizeStatus,
+  openingBatches,
+  orderFilters,
+  productCost,
+  rangeLabel,
+  shortDate,
+  uid,
+  type AppTab,
+  type ConfirmationEmployee,
+  type DateRange,
+} from './domain/orders'
 import { supabase } from './supabase'
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
-
-const statuses: Status[] = ['New', 'Confirmed', 'Out for delivery', 'Delivered', 'Canceled']
-const orderFilters: { label: string; value: Status | 'All' }[] = [
-  { label: 'All', value: 'All' },
-  ...statuses.map((status) => ({ label: status, value: status })),
-]
-const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
-type ConfirmationEmployee = { id: string; name: string; bonus: number; active: boolean }
-const money = (value: number) => `${Math.round(value)} DH`
-const uid = () => crypto.randomUUID()
-const isConfirmedOrder = (status: Status) => ['Confirmed', 'Out for delivery', 'Delivered'].includes(status)
-const normalizeStatus = (status: string): Status => status === 'Preparing' ? 'Confirmed' : status === 'Cancelled' ? 'Canceled' : status as Status
-const dateKey = (value: Date | string) => { const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
-const monthStartKey = () => { const today = new Date(); return dateKey(new Date(today.getFullYear(), today.getMonth(), 1)) }
-const monthEndKey = (value = new Date()) => dateKey(new Date(value.getFullYear(), value.getMonth() + 1, 0))
-const dateStamp = (key: string) => { const [year, month, day] = key.split('-'); return `${day}/${month}/${year}` }
-const longDate = (key: string) => new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${key}T12:00:00`))
-const shortDate = (key: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${key}T12:00:00`))
-const monthLabel = (key: string) => new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(`${key}T12:00:00`))
-type DateRange = { start: string; end: string }
-const normalizedRange = (first: string, second: string): DateRange => first <= second ? { start: first, end: second } : { start: second, end: first }
-const rangeLabel = ({ start, end }: DateRange) => {
-  const startDate = new Date(`${start}T12:00:00`); const endDate = new Date(`${end}T12:00:00`)
-  if (start === end) return shortDate(start)
-  if (startDate.getFullYear() === endDate.getFullYear() && startDate.getMonth() === endDate.getMonth()) return `${startDate.getDate()}–${shortDate(end)}`
-  return `${shortDate(start)} – ${shortDate(end)}`
-}
-const isWholeMonth = ({ start, end }: DateRange) => {
-  const startDate = new Date(`${start}T12:00:00`)
-  return startDate.getDate() === 1 && end === monthEndKey(startDate)
-}
-
-function productCost(product: Product, all: Product[]): number {
-  if (!product.components) return product.cost
-  return product.components.reduce((sum, component) => {
-    const child = all.find((item) => item.id === component.productId)
-    return sum + (child ? productCost(child, all) * component.quantity : 0)
-  }, 0)
-}
-
-function bundleStock(product: Product, all: Product[]) {
-  if (!product.components?.length) return product.stock
-  return Math.min(...product.components.map((component) => {
-    const child = all.find((item) => item.id === component.productId)
-    return child ? Math.floor(child.stock / component.quantity) : 0
-  }))
-}
-
-function itemCost(item: Order['items'][number], all: Product[]) {
-  if (typeof item.costTotal === 'number') return item.costTotal
-  const product = all.find((candidate) => candidate.id === item.productId)
-  return product ? productCost(product, all) * item.quantity : 0
-}
-
-function openingBatches(products: Product[]): InventoryBatch[] {
-  return products.filter((product) => !product.components && product.stock > 0).map((product, index) => ({
-    id: `demo-opening-${index}-${product.id}`, productId: product.id, unitCost: product.cost,
-    originalQuantity: product.stock, remainingQuantity: product.stock,
-    receivedAt: new Date(0).toISOString(), source: 'opening_balance',
-  }))
-}
 
 export default function App() {
   const devDemo = import.meta.env.DEV && new URLSearchParams(window.location.search).get('demo') === '1'
@@ -128,9 +89,9 @@ export default function App() {
 }
 
 function OrderApp({ session, devDemo }: { session: Session | null; devDemo: boolean }) {
-  const [tab, setTab] = useState<'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings'>(() => {
+  const [tab, setTab] = useState<AppTab>(() => {
     const requested = devDemo ? new URLSearchParams(window.location.search).get('tab') : null
-    return requested && ['orders', 'inventory', 'profit', 'employees', 'map', 'settings'].includes(requested) ? requested as 'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings' : 'orders'
+    return requested && ['orders', 'inventory', 'profit', 'employees', 'map', 'settings'].includes(requested) ? requested as AppTab : 'orders'
   })
   const [dark, setDark] = useState(() => localStorage.getItem('quiet-ledger-theme') === 'dark')
   const [orderRange, setOrderRange] = useState<DateRange>(() => ({ start: monthStartKey(), end: monthEndKey() }))
@@ -487,10 +448,13 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     }, () => { setRouteBusy(false); setRouteError('Allow location access to plan the deliveries from where you are.') }, { enableHighAccuracy: true, timeout: 10000 })
   }
 
+  const displayName = devDemo ? 'Amina Benali' : String(session?.user.user_metadata?.display_name || session?.user.email?.split('@')[0] || 'Team member')
+
   return <main className={`app-shell ${dark ? 'theme-dark' : 'theme-light'}`}>
     {supabase && session && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
+    <DesktopSidebar tab={tab} setTab={setTab} displayName={displayName} dark={dark} toggleTheme={() => setDark(!dark)} />
     {tab !== 'map' && <div className="ledger-scroll"><div className="ledger-content">
-    {tab === 'orders' && <section className="page quiet-orders">
+    {tab === 'orders' && <section className="page quiet-orders mobile-orders-view">
       <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className="square-action" aria-label="Open settings" onClick={() => setTab('settings')}><GearSix /></button><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
       <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
@@ -500,6 +464,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       })}</div>
       <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
+
+    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} rangeOrders={selectedRangeOrders} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
@@ -541,8 +507,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
 
     <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders' || tab === 'settings'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
-    {tab === 'orders' && <button className="ledger-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
-    {tab === 'inventory' && <button className="ledger-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
+    {tab === 'orders' && <button className="ledger-fab mobile-only-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
+    {tab === 'inventory' && <button className="ledger-fab inventory-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
@@ -573,37 +539,6 @@ function RestockModal({ product, batches, close, onSubmit }: { product: Product;
     </form>
   </Modal>
 }
-
-function OrderForm({ order, products, members, confirmationEmployees, onSubmit, submitLabel = 'Save order' }: { order?: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onSubmit: (form: HTMLFormElement) => Promise<void>; submitLabel?: string }) {
-  const assignees = members.length ? members.map((member) => ({ value: member.id, label: member.display_name || 'Team member' })) : people.map((person) => ({ value: person, label: person }))
-  return <form onSubmit={(event) => { event.preventDefault(); void onSubmit(event.currentTarget) }} className="form">
-    <label className="form-field"><span>Customer name</span><input required name="client" defaultValue={order?.client} /></label>
-    <label className="form-field"><span>WhatsApp number</span><input required name="phone" defaultValue={order?.phone} /></label>
-    <label className="form-field"><span>Address <small>Arabic or English</small></span><input required name="address" defaultValue={order?.address} /></label>
-    <label className="form-field"><span>Google Maps link <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label>
-    <label className="form-field"><span>Product or bundle</span><select name="product" defaultValue={order?.items[0]?.productId}>{products.map((product) => <option value={product.id} key={product.id}>{product.components ? 'Bundle: ' : ''}{product.name} — {money(product.price)}</option>)}</select></label>
-    <div className="form-row"><label className="form-field"><span>Quantity</span><input name="quantity" type="number" min="1" defaultValue={order?.items[0]?.quantity || 1} /></label><label className="form-field"><span>Custom price <small>Optional</small></span><input name="price" type="number" defaultValue={order?.items[0]?.unitPrice} /></label></div>
-    <div className="form-row"><label className="form-field"><span>Delivery person</span><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select></label><label className="form-field"><span>Delivery expense</span><input name="deliveryCharge" type="number" defaultValue={order?.deliveryCharge} /></label></div>
-    <div className="form-row"><label className="form-field"><span>Order status</span><select name="status" defaultValue={order?.status || 'New'}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="form-field"><span>Payment status</span><select name="paymentStatus" defaultValue={order?.paymentStatus || 'Pay on delivery'}>{paymentStatuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
-    <label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per confirmation</option>)}</select></label>
-    <label className="form-field"><span>Other expense <small>Optional</small></span><input name="otherExpense" type="number" defaultValue={order?.otherExpense} /></label>
-    <label className="form-field"><span>Note</span><textarea name="notes" defaultValue={order?.notes} /></label>
-    <button className="primary full">{submitLabel}</button>
-  </form>
-}
-
-function OrderCard({ order, products, members, confirmationEmployees, onStatus, onEdit, onDelete }: { order: Order; products: Product[]; members: { id: string; display_name: string | null }[]; confirmationEmployees: ConfirmationEmployee[]; onStatus: (id: string, status: Status) => void; onEdit: (order: Order) => void; onDelete: (order: Order) => void }) {
-  const lines = order.items.map((item) => `${products.find((p) => p.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')
-  const assignee = members.find(member => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
-  const total = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
-  const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId)
-  const tone = order.status.toLowerCase().replaceAll(' ', '-')
-  const deleteDisabled = order.status === 'Delivered'
-  const deleteLabel = deleteDisabled ? 'Delivered orders cannot be deleted because their stock cannot be restored' : `Delete order for ${order.client}`
-  return <article className={`order-row tone-${tone}`}><span className="status-rail"><i /></span><div className="order-primary"><div className="order-heading"><div><h3>{order.client}</h3><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}</a></div><div className="row-actions"><label className={`status-control tone-${tone}`}><StatusIcon status={order.status} /><select aria-label="Order status" value={order.status} onChange={(event) => void onStatus(order.id, event.target.value as Status)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select><CaretDown /></label><button aria-label={`Edit ${order.client}`} onClick={() => onEdit(order)}><PencilSimple /></button><button className="danger-icon" aria-label={deleteLabel} title={deleteLabel} disabled={deleteDisabled} onClick={() => onDelete(order)}><Trash /></button></div></div><div className="address-line">{order.locationUrl?.trim() ? <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><span>{order.address}</span><ArrowSquareOut /><span className="map-mini"><MapPin /></span></a> : <span>{order.address}</span>}</div><p className="product-line">{lines}</p>{order.notes?.trim() && <p className="note-line"><NoteBlank /><span><b>Note:</b> {order.notes}</span></p>}<div className="order-meta"><span><Tag />{money(total)}</span><span><User />{assignee}</span>{confirmer && <span><UserCheck />Confirmed by {confirmer.name}</span>}</div></div></article>
-}
-
-function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark?: boolean; toggleTheme?: () => void; actions?: ReactNode; back?: () => void }) { return <header className="ledger-header"><div className="ledger-title-wrap">{back && <button className="back-icon" aria-label="Go back" onClick={back}><ArrowLeft /></button>}<div><h1>{title}</h1><p>{subtitle}</p></div></div><div className="header-actions">{typeof dark === 'boolean' && toggleTheme && <button className="square-action theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Moon weight="fill" /> : <Sun />}</button>}{actions}</div></header> }
 
 function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onChange: (range: DateRange) => void; close: () => void }) {
   const [visibleMonth, setVisibleMonth] = useState(() => { const date = new Date(`${value.start}T12:00:00`); return new Date(date.getFullYear(), date.getMonth(), 1) })
@@ -658,12 +593,6 @@ function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onCha
     </section>
   </div>
 }
-function StatusIcon({ status }: { status: Status }) { if (status === 'Out for delivery') return <Truck />; if (status === 'Delivered' || status === 'Confirmed') return <CheckCircle />; if (status === 'Canceled') return <X />; return <ClipboardText /> }
-function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) { const icons = { orders: <ClipboardText />, inventory: <Cube />, profit: <ChartBar />, employees: <UsersThree />, map: <MapPin /> }; return <button className={active ? 'active' : ''} onClick={onClick}>{icons[icon]}<span>{label}</span></button> }
-function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) { return <div className="profit-metric"><span>{icon}</span><div><p>{label}</p><strong>{value}</strong></div></div> }
-function EmptyState({ icon, title, copy }: { icon: ReactNode; title: string; copy: string }) { return <div className="empty-state"><span>{icon}</span><b>{title}</b><p>{copy}</p></div> }
-function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button aria-label="Close" onClick={close}><X /></button></div>{children}</section></div> }
-function navigationUrl(order: Order) { return order.locationUrl || `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(order.address)}&travelmode=driving&dir_action=navigate` }
 type Coordinates = { latitude: number; longitude: number }
 type CurrentLocation = Coordinates & { accuracy: number }
 function mapCoordinates(locationUrl?: string): Coordinates | null {
@@ -706,7 +635,6 @@ async function resolveLocation(locationUrl?: string): Promise<LocationResolution
     return result
   } catch { return { locationUrl } }
 }
-async function expandedLocationUrl(locationUrl?: string) { return (await resolveLocation(locationUrl)).locationUrl }
 function distanceKm(first: Coordinates, second: Coordinates) { const radians = (value: number) => value * Math.PI / 180; const deltaLatitude = radians(second.latitude - first.latitude); const deltaLongitude = radians(second.longitude - first.longitude); const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(deltaLongitude / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
 
 function AuthScreen() {
