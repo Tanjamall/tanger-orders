@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowsClockwise,
+  BellRinging,
+  BellSlash,
   Buildings,
   CalendarBlank,
   CaretDown,
@@ -72,6 +74,12 @@ import {
   type DateRange,
 } from './domain/orders'
 import { supabase } from './supabase'
+import {
+  disablePushNotifications,
+  enablePushNotifications,
+  getPushNotificationState,
+  type PushNotificationState,
+} from './pushNotifications'
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
 
 export default function App() {
@@ -153,6 +161,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
+  const [pushState, setPushState] = useState<PushNotificationState>('prompt')
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushMessage, setPushMessage] = useState('Get an alert when another admin adds an order.')
 
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders, devDemo])
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products, devDemo])
@@ -173,6 +184,48 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     return () => { document.removeEventListener('pointerdown', dismissSearch); document.removeEventListener('keydown', dismissWithEscape) }
   }, [showSearch])
   useEffect(() => { if (tab !== 'orders') setShowSearch(false) }, [tab])
+  useEffect(() => {
+    if (devDemo || !workspaceId || !session) return
+    let cancelled = false
+    void getPushNotificationState().then(async (state) => {
+      if (state === 'enabled') {
+        await enablePushNotifications(workspaceId, session.user.id)
+      }
+      if (!cancelled) setPushState(state)
+    }).catch(() => { if (!cancelled) setPushState('unsupported') })
+    return () => { cancelled = true }
+  }, [devDemo, session, workspaceId])
+
+  async function turnOnPushNotifications() {
+    if (!workspaceId || !session) return
+    setPushBusy(true)
+    setPushMessage('Connecting this phone…')
+    try {
+      await enablePushNotifications(workspaceId, session.user.id)
+      setPushState('enabled')
+      setPushMessage('This phone will be notified when another admin adds an order.')
+    } catch (error) {
+      const state = await getPushNotificationState().catch(() => 'unsupported' as const)
+      setPushState(state)
+      setPushMessage(error instanceof Error ? error.message : 'Could not enable notifications on this phone.')
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
+  async function turnOffPushNotifications() {
+    setPushBusy(true)
+    setPushMessage('Removing this phone…')
+    try {
+      await disablePushNotifications()
+      setPushState('disabled')
+      setPushMessage('Notifications are off on this phone.')
+    } catch (error) {
+      setPushMessage(error instanceof Error ? error.message : 'Could not disable notifications on this phone.')
+    } finally {
+      setPushBusy(false)
+    }
+  }
 
   async function loadCloud() {
     if (!supabase || !session) return
@@ -287,10 +340,19 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     }
     setOrders((all) => [order, ...all])
     if (supabase && workspaceId) {
-      const { error } = await supabase.from('orders').insert({ workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null, confirmation_employee_id: order.confirmationEmployeeId ?? null, confirmation_bonus: order.confirmationBonus ?? 0, confirmed_at: order.confirmedAt ?? null })
-      if (error) setNotice(error.message)
+      const { error } = await supabase.from('orders').insert({ id: order.id, workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null, confirmation_employee_id: order.confirmationEmployeeId ?? null, confirmation_bonus: order.confirmationBonus ?? 0, confirmed_at: order.confirmedAt ?? null })
+      if (error) {
+        setOrders((all) => all.filter((item) => item.id !== order.id))
+        setNotice(error.message)
+        return
+      }
+      const { data: notification, error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: order.id } })
+      setShowOrder(false)
+      if (notificationError) setNotice('Order added, but phone notifications could not be sent.')
+      else setNotice(notification?.sent ? `Order added and ${notification.sent} phone notification${notification.sent === 1 ? '' : 's'} sent.` : 'Order added to the shared workspace.')
+      return
     }
-    setShowOrder(false); setNotice(supabase && workspaceId ? 'Order added to the shared workspace.' : 'Order added to this browser preview.')
+    setShowOrder(false); setNotice('Order added to this browser preview.')
   }
 
   async function addProduct(form: HTMLFormElement) {
@@ -525,6 +587,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'settings' && <section className="page settings-page">
       <PageHeader title="Settings" subtitle="Workspaces, team, and app controls" back={() => setTab('orders')} />
       <section className="settings-section"><h2>Shared workspace</h2><p>Use this code to invite a partner.</p><button className="workspace-code" onClick={() => { if (workspaceCode) void navigator.clipboard.writeText(workspaceCode); setNotice('Workspace code copied.') }}><strong>{workspaceCode ?? 'Loading…'}</strong><Copy /></button><div className="workspace-list">{workspaces.map((workspace) => <div className={workspace.id === workspaceId ? 'current' : ''} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}><Buildings /><span>{workspace.name}{workspace.id === workspaceId && <small> · Current</small>}</span></button>{workspace.is_owner && <button className="danger-icon" aria-label={`Delete ${workspace.name}`} onClick={() => void deleteWorkspace(workspace.id, workspace.name)}><Trash /></button>}</div>)}</div><div className="settings-inline-actions"><button onClick={() => void manageWorkspace('create')}><Plus />Create workspace</button><button onClick={() => void manageWorkspace('join')}><UserPlus />Join workspace</button></div></section>
+      <section className="settings-section notification-settings"><div className="settings-section-head"><div><h2>Order notifications</h2><p aria-live="polite">{pushMessage}</p></div><span className={`notification-state state-${pushState}`}>{pushState === 'enabled' ? <BellRinging weight="fill" /> : <BellSlash />}</span></div>{pushState === 'unsupported' && <p className="notification-help">Install the app on your Home Screen and open it over HTTPS to enable phone notifications.</p>}{pushState === 'denied' && <p className="notification-help">Notifications are blocked in this phone’s settings. Allow Tanger Orders, then reopen the app.</p>}<button className={`notification-toggle ${pushState === 'enabled' ? 'is-enabled' : ''}`} disabled={pushBusy || pushState === 'unsupported' || pushState === 'denied'} onClick={() => void (pushState === 'enabled' ? turnOffPushNotifications() : turnOnPushNotifications())}>{pushState === 'enabled' ? <><BellSlash />Turn off on this phone</> : <><BellRinging />{pushBusy ? 'Connecting…' : 'Enable on this phone'}</>}</button></section>
       <section className="settings-section"><div className="settings-section-head"><div><h2>Confirmation team</h2><p>Admins can confirm orders with no bonus.</p></div><button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add</button></div><div className="team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><span className="team-avatar"><User /></span><div><h3>{employee.name}</h3><p>{money(employee.bonus)} per confirmation · <b>{employee.active ? 'Active' : 'Inactive'}</b></p></div><button aria-label={`Edit ${employee.name}`} onClick={() => void editConfirmationEmployee(employee)}><PencilSimple /></button><button aria-label={employee.active ? `Pause ${employee.name}` : `Activate ${employee.name}`} onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? <Pause /> : <Play />}</button></article>)}{!confirmationEmployees.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add your confirmation team here." />}</div></section>
       <section className="account-actions"><button onClick={() => void loadCloud()}><ArrowsClockwise />Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}><SignOut />Sign out</button></section>
     </section>}
