@@ -241,6 +241,15 @@ button:active { transform: scale(.96); }
 .settings-inline-actions button:last-child { border-right: 0; }
 .settings-inline-actions svg { width: 17px; height: 17px; }
 .settings-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.notification-settings { display: grid; gap: 11px; }
+.notification-state { display: grid; flex: 0 0 auto; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in oklch, var(--paper) 88%, var(--line)); color: var(--muted); }
+.notification-state svg { width: 20px; height: 20px; }
+.notification-state.state-enabled { border-color: oklch(70% .08 151); background: oklch(91% .06 151); color: var(--pine); }
+.notification-help { margin: 0 !important; padding: 9px 10px; border-radius: 9px; background: oklch(95% .025 72); color: #705c2d !important; line-height: 1.45; }
+.notification-toggle { display: flex; width: 100%; align-items: center; justify-content: center; gap: 7px; padding: 11px 12px; border: 1px solid var(--pine); border-radius: 10px; background: var(--pine); color: var(--paper); font: 700 11px Manrope; }
+.notification-toggle svg { width: 18px; height: 18px; }
+.notification-toggle.is-enabled { border-color: var(--line); background: transparent; color: var(--pine); }
+.notification-toggle:disabled { cursor: not-allowed; opacity: .55; }
 .mini-primary { display: flex; align-items: center; gap: 4px; padding: 7px 9px; border: 0; border-radius: 9px; background: var(--mint); color: var(--pine); font-size: 10px; }
 .mini-primary svg { width: 14px; height: 14px; }
 .team-list { display: grid; gap: 7px; margin-top: 11px; }
