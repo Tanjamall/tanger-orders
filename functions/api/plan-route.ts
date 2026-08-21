@@ -1,6 +1,11 @@
 interface Env { GOOGLE_ROUTES_API_KEY: string; SUPABASE_URL: string; SUPABASE_PUBLISHABLE_KEY: string }
 type Stop = { id: string; address: string; locationUrl?: string }
-const cors = { 'Content-Type': 'application/json' }
+const cors = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
 
 function waypoint(stop: Stop) {
   const source = decodeURIComponent(stop.locationUrl || '')
@@ -29,3 +34,5 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const indexes = data.routes?.[0]?.optimizedIntermediateWaypointIndex ?? body.orders.map((_, index) => index)
   return Response.json({ orderIds: indexes.map((index) => body.orders![index].id) }, { headers: cors })
 }
+
+export const onRequestOptions: PagesFunction<Env> = async () => new Response(null, { status: 204, headers: cors })

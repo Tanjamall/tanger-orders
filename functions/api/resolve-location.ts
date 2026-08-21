@@ -1,4 +1,9 @@
-const headers = { 'Content-Type': 'application/json' }
+const headers = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
 const plusCodeAlphabet = '23456789CFGHJMPQRVWX'
 const tangierReference = { latitude: 35.7410429, longitude: -5.803754 }
 
@@ -86,3 +91,5 @@ export const onRequestPost: PagesFunction = async ({ request }) => {
   if (!coordinates) coordinates = coordinatesFrom(page)
   return Response.json({ locationUrl: expandedUrl, coordinates }, { headers })
 }
+
+export const onRequestOptions: PagesFunction = async () => new Response(null, { status: 204, headers })

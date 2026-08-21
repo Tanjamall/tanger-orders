@@ -75,6 +75,14 @@ import {
 } from './domain/orders'
 import { supabase } from './supabase'
 import {
+  authRedirectUrl,
+  cloudflareApiUrl,
+  getCurrentDevicePosition,
+  isLocationPermissionDenied,
+  listenForNativeAuthLinks,
+  type DevicePosition,
+} from './nativePlatform'
+import {
   disablePushNotifications,
   enablePushNotifications,
   getPushNotificationState,
@@ -96,6 +104,18 @@ export default function App() {
       setLoading(false)
     })
     return () => listener.subscription.unsubscribe()
+  }, [])
+  useEffect(() => {
+    let disposed = false
+    let removeListener: () => void = () => undefined
+    void listenForNativeAuthLinks((result) => {
+      if (result.type === 'recovery') setPasswordRecovery(true)
+      if (result.error) console.error('Authentication link error:', result.error)
+    }).then((remove) => {
+      if (disposed) remove()
+      else removeListener = remove
+    })
+    return () => { disposed = true; removeListener() }
   }, [])
   if (!devDemo && loading) return <div className="gate">Connecting to Tanger Orders…</div>
   function finishPasswordRecovery() {
@@ -519,22 +539,22 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   async function planRoute() {
     const deliveries = orders.filter((order) => ['Confirmed', 'Out for delivery'].includes(order.status) && Boolean(order.locationUrl?.trim()))
     if (!deliveries.length) { setRouteError('Add or confirm at least one delivery first.'); setShowRoutePlan(true); return }
-    if (!navigator.geolocation) { setRouteError('Location is not available on this phone.'); setShowRoutePlan(true); return }
     setRouteBusy(true); setRouteError(''); setShowRoutePlan(true)
-    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
-      try {
-        const resolvedDeliveries = await Promise.all(deliveries.map(async (order): Promise<{ order: Order; coordinates: Coordinates } | null> => {
-          const location = await resolveLocation(order.locationUrl)
-          const coordinates = location.coordinates || mapCoordinates(location.locationUrl)
-          return coordinates ? { order, coordinates } : null
-        }))
-        const remaining = resolvedDeliveries.filter((delivery): delivery is { order: Order; coordinates: Coordinates } => delivery !== null)
-        if (!remaining.length) throw new Error('None of the active delivery links could be read. Open the Map tab once, then try again.')
-        const planned: Order[] = []; let current: Coordinates = { latitude: coords.latitude, longitude: coords.longitude }
-        while (remaining.length) { const nearestIndex = remaining.reduce((best, item, index) => distanceKm(current, item.coordinates) < distanceKm(current, remaining[best].coordinates) ? index : best, 0); const [next] = remaining.splice(nearestIndex, 1); planned.push(next.order); current = next.coordinates }
-        setPlannedOrders(planned)
-      } catch (error) { setRouteError(error instanceof Error ? error.message : 'Could not plan this route.') } finally { setRouteBusy(false) }
-    }, () => { setRouteBusy(false); setRouteError('Allow location access to plan the deliveries from where you are.') }, { enableHighAccuracy: true, timeout: 10000 })
+    try {
+      const { coords } = await getCurrentDevicePosition({ enableHighAccuracy: true, timeout: 10000 })
+      const resolvedDeliveries = await Promise.all(deliveries.map(async (order): Promise<{ order: Order; coordinates: Coordinates } | null> => {
+        const location = await resolveLocation(order.locationUrl)
+        const coordinates = location.coordinates || mapCoordinates(location.locationUrl)
+        return coordinates ? { order, coordinates } : null
+      }))
+      const remaining = resolvedDeliveries.filter((delivery): delivery is { order: Order; coordinates: Coordinates } => delivery !== null)
+      if (!remaining.length) throw new Error('None of the active delivery links could be read. Open the Map tab once, then try again.')
+      const planned: Order[] = []; let current: Coordinates = { latitude: coords.latitude, longitude: coords.longitude }
+      while (remaining.length) { const nearestIndex = remaining.reduce((best, item, index) => distanceKm(current, item.coordinates) < distanceKm(current, remaining[best].coordinates) ? index : best, 0); const [next] = remaining.splice(nearestIndex, 1); planned.push(next.order); current = next.coordinates }
+      setPlannedOrders(planned)
+    } catch (error) {
+      setRouteError(isLocationPermissionDenied(error) ? 'Allow location access to plan the deliveries from where you are.' : error instanceof Error ? error.message : 'Could not plan this route.')
+    } finally { setRouteBusy(false) }
   }
 
   const displayName = devDemo ? 'Amina Benali' : String(session?.user.user_metadata?.display_name || session?.user.email?.split('@')[0] || 'Team member')
@@ -717,7 +737,7 @@ async function resolveLocation(locationUrl?: string): Promise<LocationResolution
     }
   } catch { /* A blocked storage area should not prevent location lookup. */ }
   try {
-    const response = await fetch('/api/resolve-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) })
+    const response = await fetch(cloudflareApiUrl('/api/resolve-location'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) })
     if (!response.ok) return { locationUrl }
     const data = await response.json() as LocationResolution
     const result = { locationUrl: data.locationUrl || locationUrl, coordinates: data.coordinates || mapCoordinates(data.locationUrl) || undefined }
@@ -785,7 +805,7 @@ function AuthScreen() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!supabase) return
     const values = new FormData(event.currentTarget); const email = String(values.get('email')); const password = String(values.get('password'))
-    const result = signUp ? await supabase.auth.signUp({ email, password, options: { data: { display_name: String(values.get('name')) }, emailRedirectTo: window.location.origin } }) : await supabase.auth.signInWithPassword({ email, password })
+    const result = signUp ? await supabase.auth.signUp({ email, password, options: { data: { display_name: String(values.get('name')) }, emailRedirectTo: authRedirectUrl() } }) : await supabase.auth.signInWithPassword({ email, password })
     setMessage(result.error?.message || (signUp ? 'Check your email to confirm your account, then sign in.' : 'Signed in.'))
   }
   return <main className="gate"><p className="eyebrow">LOCAL DELIVERY · TANGER</p><h1>Tanger Orders</h1><p>One shared place for every order.</p><form className="form auth-form" onSubmit={submit}>{signUp && <label className="form-field"><span>Your name</span><input name="name" required /></label>}<label className="form-field"><span>Email</span><input name="email" type="email" required /></label><label className="form-field"><span>Password <small>6+ characters</small></span><input name="password" type="password" minLength={6} required /></label><button className="primary full">{signUp ? 'Create account' : 'Sign in'}</button></form><button className="link-button" onClick={() => setSignUp(!signUp)}>{signUp ? 'Already have an account? Sign in' : 'New here? Create account'}</button>{message && <p className="message">{message}</p>}</main>
@@ -810,20 +830,18 @@ function DeliveryMap({ orders }: { orders: Order[] }) {
   const [locationStatus, setLocationStatus] = useState<'locating' | 'available' | 'denied' | 'unavailable'>('locating');
   const [resolvedOrders, setResolvedOrders] = useState<{ order: Order; coordinates: Coordinates }[]>([]);
 
-  const acceptLocation = ({ coords }: GeolocationPosition) => {
+  const acceptLocation = ({ coords }: DevicePosition) => {
     const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy };
     setCurrentLocation(location); setLocationStatus('available');
   };
-  const rejectLocation = (error: GeolocationPositionError) => setLocationStatus(error.code === 1 ? 'denied' : 'unavailable');
+  const rejectLocation = (error: unknown) => setLocationStatus(isLocationPermissionDenied(error) ? 'denied' : 'unavailable');
   const requestCurrentLocation = () => {
-    if (!navigator.geolocation) { setLocationStatus('unavailable'); return; }
     setLocationStatus('locating');
-    navigator.geolocation.getCurrentPosition(acceptLocation, rejectLocation, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 });
+    void getCurrentDevicePosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 }).then(acceptLocation).catch(rejectLocation);
   };
 
   useEffect(() => {
-    if (!navigator.geolocation) { setLocationStatus('unavailable'); return; }
-    navigator.geolocation.getCurrentPosition(acceptLocation, rejectLocation, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 });
+    void getCurrentDevicePosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 }).then(acceptLocation).catch(rejectLocation);
   }, []);
 
   useEffect(() => {
