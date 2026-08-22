@@ -375,6 +375,17 @@ button:active { transform: scale(.96); }
 .confirmation-team-list p { margin: 3px 0 0; color: var(--muted); font-size: 9px; }
 .confirmation-team-list article > div:last-child { display: flex; gap: 5px; }
 .confirmation-team-list button { padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--pine); font-size: 10px; }
+.bonus-basis-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.bonus-basis-field legend { margin-bottom: 6px; color: var(--pine); font-size: 10px; font-weight: 700; }
+.bonus-basis-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bonus-basis-options label { position: relative; display: block; min-width: 0; cursor: pointer; }
+.bonus-basis-options input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.bonus-basis-options span { display: grid; min-height: 72px; align-content: center; gap: 4px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); color: var(--ink); }
+.bonus-basis-options b { color: var(--pine); font-size: 11px; }
+.bonus-basis-options small { color: var(--muted); font-size: 9px; line-height: 1.35; }
+.bonus-basis-options input:checked + span { border-color: var(--pine); background: color-mix(in srgb, var(--mint) 72%, var(--paper-raised)); box-shadow: inset 0 0 0 1px var(--pine); }
+.bonus-basis-options input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--pine) 18%, transparent); outline-offset: 2px; }
+.exit-hint { position: fixed; z-index: 140; right: 50%; bottom: calc(82px + env(safe-area-inset-bottom)); translate: 50% 0; width: max-content; max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 10px; background: var(--ink); color: var(--paper-raised); box-shadow: 0 10px 26px rgb(0 25 18 / 22%); font-size: 11px; font-weight: 700; animation: soft-fade .2s ease-out both; }
 .route-plan article { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .route-plan article > b { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; background: var(--amber); color: #173028; }
 .route-plan article strong, .route-plan article span { display: block; }

@@ -52,6 +52,27 @@ export async function listenForNativeAuthLinks(onResult: (result: AuthLinkResult
   return () => { void listener.remove() }
 }
 
+export async function listenForNativeBackButton(onBack: () => boolean, onExitHint: () => void) {
+  if (!Capacitor.isNativePlatform()) return () => undefined
+  let lastHomeBackAt = 0
+  const listener = await CapacitorApp.addListener('backButton', () => {
+    if (onBack()) {
+      lastHomeBackAt = 0
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastHomeBackAt <= 2000) {
+      void CapacitorApp.exitApp()
+      return
+    }
+
+    lastHomeBackAt = now
+    onExitHint()
+  })
+  return () => { void listener.remove() }
+}
+
 export type DevicePosition = {
   coords: { latitude: number; longitude: number; accuracy: number }
 }

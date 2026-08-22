@@ -82,6 +82,7 @@ import {
   getCurrentDevicePosition,
   isLocationPermissionDenied,
   listenForNativeAuthLinks,
+  listenForNativeBackButton,
   type DevicePosition,
 } from './nativePlatform'
 import {
@@ -184,6 +185,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
   const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>(() => devDemo ? [{ id: 'demo-amina', name: 'Amina', bonus: 5, bonusBasis: 'per_order', active: true }, { id: 'demo-karim', name: 'Karim', bonus: 5, bonusBasis: 'per_item', active: true }] : [])
   const [showConfirmationTeam, setShowConfirmationTeam] = useState(false)
+  const [editingConfirmationEmployee, setEditingConfirmationEmployee] = useState<ConfirmationEmployee | null>(null)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
@@ -191,11 +193,57 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [pushBusy, setPushBusy] = useState(false)
   const [pushMessage, setPushMessage] = useState('Get an alert when another admin adds or delivers an order.')
   const [highlightedPushOrderIds, setHighlightedPushOrderIds] = useState<string[]>(consumePendingPushOrderIds)
+  const [showExitHint, setShowExitHint] = useState(false)
+  const exitHintTimer = useRef<number | null>(null)
+  const nativeBackAction = useRef<() => boolean>(() => false)
 
   useEffect(() => listenForPushNotificationOrders((orderId) => {
     setHighlightedPushOrderIds((current) => current.includes(orderId) ? current : [...current, orderId])
   }), [])
   useEffect(() => { if (highlightedPushOrderIds.length) setTab('orders') }, [highlightedPushOrderIds.length])
+  useEffect(() => {
+    if (!highlightedPushOrderIds.length) return
+    const timer = window.setTimeout(() => setHighlightedPushOrderIds([]), 3500)
+    return () => window.clearTimeout(timer)
+  }, [highlightedPushOrderIds])
+
+  nativeBackAction.current = () => {
+    if (editingConfirmationEmployee) { setEditingConfirmationEmployee(null); return true }
+    if (showOrderCalendar) { setShowOrderCalendar(false); return true }
+    if (editingOrder) { setEditingOrder(null); return true }
+    if (showOrder) { setShowOrder(false); return true }
+    if (showProduct) { setShowProduct(false); return true }
+    if (editingProduct) { setEditingProduct(null); return true }
+    if (restockingProduct) { setRestockingProduct(null); return true }
+    if (showBundle) { setShowBundle(false); return true }
+    if (showRoutePlan) { setShowRoutePlan(false); return true }
+    if (showConfirmationTeam) { setShowConfirmationTeam(false); return true }
+    if (showSearch) { setShowSearch(false); return true }
+    if (selectedEmployeeId) { setSelectedEmployeeId(null); return true }
+    if (tab !== 'orders') { setTab('orders'); return true }
+    return false
+  }
+
+  useEffect(() => {
+    let disposed = false
+    let removeListener: () => void = () => undefined
+    void listenForNativeBackButton(
+      () => nativeBackAction.current(),
+      () => {
+        setShowExitHint(true)
+        if (exitHintTimer.current) window.clearTimeout(exitHintTimer.current)
+        exitHintTimer.current = window.setTimeout(() => setShowExitHint(false), 2000)
+      },
+    ).then((remove) => {
+      if (disposed) remove()
+      else removeListener = remove
+    })
+    return () => {
+      disposed = true
+      removeListener()
+      if (exitHintTimer.current) window.clearTimeout(exitHintTimer.current)
+    }
+  }, [])
 
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders, devDemo])
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products, devDemo])
@@ -558,20 +606,22 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     form.reset(); await loadCloud()
   }
 
-  async function editConfirmationEmployee(employee: ConfirmationEmployee) {
-    const name = window.prompt('Employee name', employee.name)?.trim()
-    if (!name) return
-    const basisValue = window.prompt('Pay this employee by "order" or by "item"?', employee.bonusBasis === 'per_item' ? 'item' : 'order')?.trim().toLowerCase()
-    if (!basisValue) return
-    const bonusBasis: BonusBasis | null = basisValue === 'item' || basisValue === 'per_item' ? 'per_item' : basisValue === 'order' || basisValue === 'per_order' ? 'per_order' : null
-    if (!bonusBasis) { setNotice('Enter either “order” or “item” for the bonus basis.'); return }
-    const bonusValue = window.prompt(`Bonus for each confirmed ${bonusBasis === 'per_item' ? 'item' : 'order'} (DH)`, String(employee.bonus))
-    if (bonusValue === null) return
-    const bonus = Number(bonusValue)
+  async function editConfirmationEmployee(form: HTMLFormElement) {
+    if (!editingConfirmationEmployee) return
+    const values = new FormData(form)
+    const name = String(values.get('name') || '').trim()
+    const bonusBasis: BonusBasis = values.get('bonusBasis') === 'per_item' ? 'per_item' : 'per_order'
+    const bonus = Number(values.get('bonus'))
+    if (!name) { setNotice('Enter the employee name.'); return }
     if (!Number.isFinite(bonus) || bonus < 0) { setNotice('Enter a valid bonus amount.'); return }
-    if (!supabase) { setConfirmationEmployees((all) => all.map((item) => item.id === employee.id ? { ...item, name, bonus, bonusBasis } : item)); return }
-    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: name, employee_bonus: bonus, employee_bonus_basis: bonusBasis, employee_active: employee.active })
+    if (!supabase) {
+      setConfirmationEmployees((all) => all.map((item) => item.id === editingConfirmationEmployee.id ? { ...item, name, bonus, bonusBasis } : item))
+      setEditingConfirmationEmployee(null)
+      return
+    }
+    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: editingConfirmationEmployee.id, employee_name: name, employee_bonus: bonus, employee_bonus_basis: bonusBasis, employee_active: editingConfirmationEmployee.active })
     if (error) { setNotice(error.message); return }
+    setEditingConfirmationEmployee(null)
     await loadCloud()
   }
 
@@ -641,12 +691,12 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
-        <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => void editConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button></>} />
+        <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => setEditingConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button></>} />
         <div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section><h3>Confirmation history</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations yet" copy="Assign this employee when confirming an order." />}</div>
       </> : <>
         <PageHeader title="Employees" subtitle="Confirmation work and bonuses" actions={<button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add employee</button>} />
         <p className="page-intro">Tap an employee to view confirmation history.</p>
-        <div className="employee-ledger">{employeeSummaries.map(({ employee, count, itemCount, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{employee.bonusBasis === 'per_item' ? `${itemCount} confirmed ${itemCount === 1 ? 'item' : 'items'}` : `${count} confirmed ${count === 1 ? 'order' : 'orders'}`}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add confirmation employees from Settings." />}</div>
+        <div className="employee-ledger">{employeeSummaries.map(({ employee, count, itemCount, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{employee.bonusBasis === 'per_item' ? `${itemCount} confirmed ${itemCount === 1 ? 'item' : 'items'}` : `${count} confirmed ${count === 1 ? 'order' : 'orders'}`}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Use Add employee above to create the first one." />}</div>
       </>}
     </section>}
 
@@ -668,13 +718,15 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
-    {showConfirmationTeam && <Modal title="Manage employees" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Choose whether each employee earns a fixed amount per confirmed order or per item quantity. Admin confirmations have no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Pay bonus by</span><select name="bonusBasis" defaultValue="per_order"><option value="per_order">Confirmed order</option><option value="per_item">Number of items</option></select></label><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmed {employee.bonusBasis === 'per_item' ? 'item' : 'order'} · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
+    {showConfirmationTeam && <Modal title="Manage employees" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Choose whether each employee earns a fixed amount per confirmed order or per item quantity. Admin confirmations have no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmed {employee.bonusBasis === 'per_item' ? 'item' : 'order'} · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => { setShowConfirmationTeam(false); setEditingConfirmationEmployee(employee) }}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
+    {editingConfirmationEmployee && <Modal title="Edit employee" close={() => setEditingConfirmationEmployee(null)}><form onSubmit={(event) => { event.preventDefault(); void editConfirmationEmployee(event.currentTarget) }} className="form employee-edit-form"><label className="form-field"><span>Employee name</span><input required name="name" defaultValue={editingConfirmationEmployee.name} autoFocus /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked={editingConfirmationEmployee.bonusBasis === 'per_order'} /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" defaultChecked={editingConfirmationEmployee.bonusBasis === 'per_item'} /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue={editingConfirmationEmployee.bonus} /></label><button className="primary full">Save changes</button></form></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Product name</span><input required name="name" /></label><div className="form-row"><label className="form-field"><span>Buying cost</span><input required name="cost" type="number" /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" /></label></div><div className="form-row"><label className="form-field"><span>Opening stock</span><input required name="stock" type="number" /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue="3" /></label></div><button className="primary full">Save product</button></form></Modal>}
     {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Name</span><input required name="name" defaultValue={editingProduct.name} /></label>{!editingProduct.components && <><div className="form-row"><label className="form-field"><span>Stock</span><input required name="stock" type="number" min="0" step="1" defaultValue={editingProduct.stock} /></label><label className="form-field"><span>Active FIFO cost</span><input required name="cost" type="number" min="0" step="0.01" defaultValue={editingProduct.cost} /></label></div><label className="form-field"><span>Correction note <small>Optional</small></span><input name="correctionNote" placeholder="e.g. Restock quantity typo" /></label><p className="form-note">Corrections apply only to unsold stock. Delivered-order costs stay unchanged.</p></>}<div className="form-row"><label className="form-field"><span>Selling price</span><input required name="price" type="number" min="0" step="0.01" defaultValue={editingProduct.price} /></label>{!editingProduct.components && <label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" min="0" defaultValue={editingProduct.lowStockAt} /></label>}</div><button className="primary full">Save changes</button></form></Modal>}
     {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost) => restockProduct(restockingProduct, quantity, unitCost)} />}
     {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
     {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank"><NavigationArrow />Navigate</a></article>)}</div></Modal>}
     </>}
+    {showExitHint && <div className="exit-hint" role="status" aria-live="polite">Press back again to exit</div>}
   </main>
 }
 
