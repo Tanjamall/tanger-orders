@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "803419446040",
+    "project_id": "tanger-orders",
+    "storage_bucket": "tanger-orders.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:803419446040:android:a37711ab0ac6f681041c6d",
+        "android_client_info": {
+          "package_name": "com.tanjamall.tangerorders"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvP-FuzZST9VTQTN7DB9Oah-qvif4BSF4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
