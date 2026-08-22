@@ -6,3 +6,5 @@ backups/
 quiet-ledger-prototype/
 .codex-*
 supabase/.temp/
+firebase-service-account*.json
+service-account*.json

@@ -28,7 +28,7 @@ self.addEventListener('push', (event) => {
     badge: '/icon.svg',
     tag: payload.orderId ? `order-${payload.orderId}` : 'new-order',
     renotify: true,
-    data: { url: '/', orderId: payload.orderId },
+    data: { url: payload.orderId ? `/?orderId=${encodeURIComponent(payload.orderId)}` : '/', orderId: payload.orderId },
   }))
 })
 

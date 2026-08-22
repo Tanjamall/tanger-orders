@@ -83,9 +83,12 @@ import {
   type DevicePosition,
 } from './nativePlatform'
 import {
+  consumePendingPushOrderId,
   disablePushNotifications,
   enablePushNotifications,
   getPushNotificationState,
+  initializePushNotifications,
+  listenForPushNotificationOrders,
   type PushNotificationState,
 } from './pushNotifications'
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
@@ -95,6 +98,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(Boolean(supabase))
   const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecoveryUrl)
+  useEffect(() => { void initializePushNotifications() }, [])
   useEffect(() => {
     if (!supabase) return
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) })
@@ -184,6 +188,21 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [pushState, setPushState] = useState<PushNotificationState>('prompt')
   const [pushBusy, setPushBusy] = useState(false)
   const [pushMessage, setPushMessage] = useState('Get an alert when another admin adds an order.')
+  const [pendingPushOrderId, setPendingPushOrderId] = useState(consumePendingPushOrderId)
+
+  useEffect(() => listenForPushNotificationOrders(setPendingPushOrderId), [])
+  useEffect(() => {
+    if (!pendingPushOrderId) return
+    const order = orders.find((item) => item.id === pendingPushOrderId)
+    if (!order) return
+    const day = dateKey(order.createdAt)
+    setTab('orders')
+    setQuery('')
+    setStatusFilter('All')
+    setOrderRange({ start: day, end: day })
+    setEditingOrder(order)
+    setPendingPushOrderId(null)
+  }, [orders, pendingPushOrderId])
 
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders, devDemo])
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products, devDemo])
