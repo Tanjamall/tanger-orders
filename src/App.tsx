@@ -44,7 +44,7 @@ import '@fontsource/manrope/400.css'
 import '@fontsource/manrope/500.css'
 import '@fontsource/manrope/600.css'
 import '@fontsource/manrope/700.css'
-import { EmptyState, Metric, Modal, NavButton, PageHeader } from './components/ui'
+import { EmptyState, FeatureBoundary, Metric, Modal, NavButton, PageHeader } from './components/ui'
 import { initialOrders, initialProducts } from './data'
 import { DesktopOrdersView, DesktopSidebar } from './features/orders/DesktopOrders'
 import { OrderCard, OrderForm } from './features/orders/OrderComponents'
@@ -95,6 +95,32 @@ import {
   type PushNotificationState,
 } from './pushNotifications'
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
+
+type WorkspaceStatus = 'checking' | 'ready' | 'missing' | 'error'
+type ResourceName = 'workspace' | 'orders' | 'products' | 'members' | 'employees' | 'inventory'
+type ResourcePhase = 'idle' | 'loading' | 'ready' | 'error'
+type PendingOrder = { workspaceId: string; order: Order; status: 'saving' | 'failed'; lastError?: string }
+
+const emptyResourcePhases: Record<ResourceName, ResourcePhase> = {
+  workspace: 'idle', orders: 'idle', products: 'idle', members: 'idle', employees: 'idle', inventory: 'idle',
+}
+
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const value = localStorage.getItem(key)
+    return value ? JSON.parse(value) as T : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function orderFromRow(row: any): Order {
+  return { id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: normalizeStatus(row.status), paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, confirmationEmployeeId: row.confirmation_employee_id ?? undefined, confirmationBonus: Number(row.confirmation_bonus ?? 0), confirmedAt: row.confirmed_at ?? undefined }
+}
+
+function orderToRow(order: Order, workspaceId: string) {
+  return { id: order.id, workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null, confirmation_employee_id: order.confirmationEmployeeId ?? null, confirmation_bonus: order.confirmationBonus ?? 0, confirmed_at: order.confirmedAt ?? null }
+}
 
 export default function App() {
   const devDemo = import.meta.env.DEV && new URLSearchParams(window.location.search).get('demo') === '1'
@@ -151,6 +177,12 @@ function clearPasswordRecoveryUrl() {
 }
 
 function OrderApp({ session, devDemo }: { session: Session | null; devDemo: boolean }) {
+  const storageOwner = session?.user.id ?? 'preview'
+  const workspaceHintKey = `tanger-workspace:${storageOwner}`
+  const cachedWorkspaceId = devDemo ? 'demo-workspace' : localStorage.getItem(workspaceHintKey)
+  const initialOrdersStorageKey = `tanger-orders:${storageOwner}:${cachedWorkspaceId ?? 'unassigned'}`
+  const initialProductsStorageKey = `tanger-products:${storageOwner}:${cachedWorkspaceId ?? 'unassigned'}`
+  const outboxStorageKey = `tanger-order-outbox:${storageOwner}`
   const [tab, setTab] = useState<AppTab>(() => {
     const requested = devDemo ? new URLSearchParams(window.location.search).get('tab') : null
     return requested && ['orders', 'inventory', 'profit', 'employees', 'map', 'settings'].includes(requested) ? requested as AppTab : 'orders'
@@ -158,12 +190,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [dark, setDark] = useState(() => localStorage.getItem('quiet-ledger-theme') === 'dark')
   const [orderRange, setOrderRange] = useState<DateRange>(() => ({ start: monthStartKey(), end: monthEndKey() }))
   const [showOrderCalendar, setShowOrderCalendar] = useState(false)
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>(() => devDemo ? [] : readStored<PendingOrder[]>(outboxStorageKey, []))
   const [orders, setOrders] = useState<Order[]>(() => {
-    const stored = devDemo ? initialOrders : JSON.parse(localStorage.getItem('tanger-orders') || 'null') ?? initialOrders
-    return stored.map((order: Order) => ({ ...order, status: normalizeStatus(order.status) }))
+    const stored = devDemo ? initialOrders : readStored<Order[]>(initialOrdersStorageKey, [])
+    const queued = devDemo ? [] : readStored<PendingOrder[]>(outboxStorageKey, []).filter((entry) => entry.workspaceId === cachedWorkspaceId).map((entry) => entry.order)
+    return [...queued, ...stored.filter((order) => !queued.some((queuedOrder) => queuedOrder.id === order.id))].map((order: Order) => ({ ...order, status: normalizeStatus(order.status) }))
   })
-  const [products, setProducts] = useState<Product[]>(() => devDemo ? initialProducts : JSON.parse(localStorage.getItem('tanger-products') || 'null') ?? initialProducts)
-  const [inventoryBatches, setInventoryBatches] = useState<InventoryBatch[]>(() => openingBatches(initialProducts))
+  const [products, setProducts] = useState<Product[]>(() => devDemo ? initialProducts : readStored<Product[]>(initialProductsStorageKey, []))
+  const [inventoryBatches, setInventoryBatches] = useState<InventoryBatch[]>(() => devDemo ? openingBatches(initialProducts) : [])
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<Status | 'All'>('All')
   const [showOrder, setShowOrder] = useState(false)
@@ -180,6 +214,12 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [plannedOrders, setPlannedOrders] = useState<Order[]>([])
   const [, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => devDemo ? 'demo-workspace' : null)
+  const ordersStorageKey = `tanger-orders:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
+  const productsStorageKey = `tanger-products:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(() => devDemo ? 'ready' : 'checking')
+  const [workspaceError, setWorkspaceError] = useState('')
+  const [resourcePhases, setResourcePhases] = useState<Record<ResourceName, ResourcePhase>>(() => devDemo ? Object.fromEntries(Object.keys(emptyResourcePhases).map((key) => [key, 'ready'])) as Record<ResourceName, ResourcePhase> : emptyResourcePhases)
+  const [resourceErrors, setResourceErrors] = useState<Partial<Record<ResourceName, string>>>({})
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(() => devDemo ? 'TNG-4821' : null)
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>(() => devDemo ? [{ id: 'demo-workspace', name: 'Tanger Orders', join_code: 'TNG-4821', is_owner: true }] : [])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
@@ -196,6 +236,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [showExitHint, setShowExitHint] = useState(false)
   const exitHintTimer = useRef<number | null>(null)
   const nativeBackAction = useRef<() => boolean>(() => false)
+  const pendingOrdersRef = useRef(pendingOrders)
+  const syncingOrderIds = useRef(new Set<string>())
 
   useEffect(() => listenForPushNotificationOrders((orderId) => {
     setHighlightedPushOrderIds((current) => current.includes(orderId) ? current : [...current, orderId])
@@ -245,8 +287,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     }
   }, [])
 
-  useEffect(() => { if (!devDemo) localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders, devDemo])
-  useEffect(() => { if (!devDemo) localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products, devDemo])
+  useEffect(() => { pendingOrdersRef.current = pendingOrders; if (!devDemo) localStorage.setItem(outboxStorageKey, JSON.stringify(pendingOrders)) }, [pendingOrders, devDemo, outboxStorageKey])
+  useEffect(() => { if (!devDemo) localStorage.setItem(ordersStorageKey, JSON.stringify(orders)) }, [orders, devDemo, ordersStorageKey])
+  useEffect(() => { if (!devDemo) localStorage.setItem(productsStorageKey, JSON.stringify(products)) }, [products, devDemo, productsStorageKey])
   useEffect(() => {
     localStorage.setItem('quiet-ledger-theme', dark ? 'dark' : 'light')
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
@@ -307,43 +350,150 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     }
   }
 
+  function resourceStarted(name: ResourceName) {
+    setResourcePhases((current) => ({ ...current, [name]: 'loading' }))
+    setResourceErrors((current) => { const next = { ...current }; delete next[name]; return next })
+  }
+
+  function resourceFinished(name: ResourceName) {
+    setResourcePhases((current) => ({ ...current, [name]: 'ready' }))
+  }
+
+  function resourceFailed(name: ResourceName, error: unknown) {
+    const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : 'Could not refresh this data.'
+    setResourcePhases((current) => ({ ...current, [name]: 'error' }))
+    setResourceErrors((current) => ({ ...current, [name]: message }))
+  }
+
+  async function loadResource(name: ResourceName, work: () => Promise<void>) {
+    resourceStarted(name)
+    try { await work(); resourceFinished(name) } catch (error) { resourceFailed(name, error) }
+  }
+
+  async function loadWorkspaceMeta(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('workspace', async () => {
+      const [workspace, memberships] = await Promise.all([
+        client.from('workspaces').select('join_code').eq('id', id).single(),
+        client.rpc('list_my_workspaces'),
+      ])
+      if (workspace.error) throw workspace.error
+      if (memberships.error) throw memberships.error
+      setWorkspaceCode(workspace.data?.join_code ?? null)
+      setWorkspaces(memberships.data ?? [])
+    })
+  }
+
+  async function loadProducts(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('products', async () => {
+      const result = await client.from('products').select('*').eq('workspace_id', id).order('created_at')
+      if (result.error) throw result.error
+      setProducts(result.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
+    })
+  }
+
+  async function loadOrders(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('orders', async () => {
+      const result = await client.from('orders').select('*').eq('workspace_id', id).order('created_at', { ascending: false })
+      if (result.error) throw result.error
+      const cloudOrders = result.data.map(orderFromRow)
+      const queued = pendingOrdersRef.current.filter((entry) => entry.workspaceId === id).map((entry) => entry.order)
+      setOrders([...queued, ...cloudOrders.filter((order) => !queued.some((queuedOrder) => queuedOrder.id === order.id))])
+    })
+  }
+
+  async function loadMembers(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('members', async () => {
+      const result = await client.from('profiles').select('id, display_name').eq('workspace_id', id)
+      if (result.error) throw result.error
+      setMembers(result.data ?? [])
+    })
+  }
+
+  async function loadEmployees(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('employees', async () => {
+      const result = await client.from('confirmation_employees').select('*').eq('workspace_id', id).order('created_at')
+      if (result.error) throw result.error
+      setConfirmationEmployees(result.data.map((row: any) => ({ id: row.id, name: row.name, bonus: Number(row.bonus_per_confirmation), bonusBasis: row.bonus_basis === 'per_item' ? 'per_item' : 'per_order', active: row.active })))
+    })
+  }
+
+  async function loadInventory(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('inventory', async () => {
+      const result = await client.from('inventory_batches').select('*').eq('workspace_id', id).in('source', ['opening_balance', 'restock', 'correction']).order('received_at', { ascending: false })
+      if (result.error) throw result.error
+      setInventoryBatches(result.data.map((row: any) => ({ id: row.id, productId: row.product_id, unitCost: Number(row.unit_cost), originalQuantity: row.original_quantity, remainingQuantity: row.remaining_quantity, receivedAt: row.received_at, source: row.source })))
+    })
+  }
+
+  async function refreshWorkspaceData(id = workspaceId) {
+    if (!id) return
+    await Promise.all([loadWorkspaceMeta(id), loadProducts(id), loadOrders(id), loadMembers(id), loadEmployees(id), loadInventory(id)])
+  }
+
   async function loadCloud() {
     if (!supabase || !session) return
+    if (!workspaceId) setWorkspaceStatus('checking')
+    setWorkspaceError('')
     const { data: profile, error } = await supabase.from('profiles').select('workspace_id').eq('id', session.user.id).single()
-    if (error) { setNotice(`Database setup needed: ${error.message}`); return }
-    if (!profile.workspace_id) { setWorkspaceId(null); return }
+    if (error) {
+      setWorkspaceError(error.message)
+      if (workspaceId) resourceFailed('workspace', error)
+      else setWorkspaceStatus('error')
+      return
+    }
+    if (!profile.workspace_id) {
+      localStorage.removeItem(workspaceHintKey)
+      setWorkspaceId(null)
+      setOrders([]); setProducts([]); setInventoryBatches([]); setMembers([]); setConfirmationEmployees([])
+      setWorkspaceStatus('missing')
+      return
+    }
+    if (profile.workspace_id !== (workspaceId ?? cachedWorkspaceId)) {
+      setOrders(pendingOrdersRef.current.filter((entry) => entry.workspaceId === profile.workspace_id).map((entry) => entry.order))
+      setProducts([]); setInventoryBatches([]); setMembers([]); setConfirmationEmployees([])
+    }
+    localStorage.setItem(workspaceHintKey, profile.workspace_id)
     setWorkspaceId(profile.workspace_id)
-    const [workspace, productRows, orderRows, profileRows, employeeRows, batchRows] = await Promise.all([
-      supabase.from('workspaces').select('join_code').eq('id', profile.workspace_id).single(),
-      supabase.from('products').select('*').order('created_at'),
-      supabase.from('orders').select('*').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('id, display_name'),
-      supabase.from('confirmation_employees').select('*').order('created_at'),
-      supabase.from('inventory_batches').select('*').in('source', ['opening_balance', 'restock', 'correction']).order('received_at', { ascending: false }),
-    ])
-    if (productRows.error || orderRows.error || employeeRows.error || batchRows.error) { setNotice(`Could not load shared data: ${(productRows.error || orderRows.error || employeeRows.error || batchRows.error)?.message}`); return }
-    setWorkspaceCode(workspace.data?.join_code ?? null); setMembers(profileRows.data ?? [])
-    const { data: memberships } = await supabase.rpc('list_my_workspaces')
-    setWorkspaces(memberships ?? [])
-    setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
-    setConfirmationEmployees(employeeRows.data.map((row: any) => ({ id: row.id, name: row.name, bonus: Number(row.bonus_per_confirmation), bonusBasis: row.bonus_basis === 'per_item' ? 'per_item' : 'per_order', active: row.active })))
-    setInventoryBatches(batchRows.data.map((row: any) => ({ id: row.id, productId: row.product_id, unitCost: Number(row.unit_cost), originalQuantity: row.original_quantity, remainingQuantity: row.remaining_quantity, receivedAt: row.received_at, source: row.source })))
-    setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: normalizeStatus(row.status), paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, confirmationEmployeeId: row.confirmation_employee_id ?? undefined, confirmationBonus: Number(row.confirmation_bonus ?? 0), confirmedAt: row.confirmed_at ?? undefined })))
-    setNotice('Live shared data is connected.')
+    setWorkspaceStatus('ready')
+    await refreshWorkspaceData(profile.workspace_id)
   }
-  useEffect(() => { void loadCloud() }, [session])
+  useEffect(() => { if (!devDemo) void loadCloud() }, [session])
   useEffect(() => {
-    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void loadCloud() }
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible' && workspaceStatus === 'ready') void refreshWorkspaceData() }
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => { window.removeEventListener('focus', refreshWhenVisible); document.removeEventListener('visibilitychange', refreshWhenVisible) }
-  }, [session])
+  }, [workspaceId, workspaceStatus])
   useEffect(() => {
-    if (!supabase || !workspaceId) return
+    if (!supabase || !workspaceId || workspaceStatus !== 'ready') return
     const client = supabase
-    const channel = client.channel(`tanger-orders-${workspaceId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, loadCloud).on('postgres_changes', { event: '*', schema: 'public', table: 'confirmation_employees' }, loadCloud).subscribe()
+    const channel = client.channel(`tanger-orders-${workspaceId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `workspace_id=eq.${workspaceId}` }, () => void loadOrders(workspaceId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `workspace_id=eq.${workspaceId}` }, () => { void loadProducts(workspaceId); void loadInventory(workspaceId) })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'confirmation_employees', filter: `workspace_id=eq.${workspaceId}` }, () => void loadEmployees(workspaceId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_batches', filter: `workspace_id=eq.${workspaceId}` }, () => void loadInventory(workspaceId))
+      .subscribe()
     return () => { void client.removeChannel(channel) }
-  }, [workspaceId])
+  }, [workspaceId, workspaceStatus])
+  useEffect(() => {
+    if (workspaceStatus !== 'ready') return
+    const retry = () => { for (const entry of pendingOrdersRef.current) void syncPendingOrder(entry) }
+    retry()
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [workspaceStatus, workspaceId])
 
   const confirmationCost = (order: Order) => order.confirmationEmployeeId
     ? order.confirmationBonus ?? confirmationBonusFor(confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId), order.items)
@@ -418,6 +568,39 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     setNotice(`Order for ${order.client} deleted.`)
   }
 
+  function updatePendingOrders(change: (current: PendingOrder[]) => PendingOrder[]) {
+    setPendingOrders((current) => {
+      const next = change(current)
+      pendingOrdersRef.current = next
+      if (!devDemo) localStorage.setItem(outboxStorageKey, JSON.stringify(next))
+      return next
+    })
+  }
+
+  async function syncPendingOrder(entry: PendingOrder) {
+    if (!supabase || syncingOrderIds.current.has(entry.order.id)) return
+    syncingOrderIds.current.add(entry.order.id)
+    updatePendingOrders((current) => current.map((item) => item.order.id === entry.order.id ? { ...item, status: 'saving', lastError: undefined } : item))
+    try {
+      const { data, error } = await supabase.from('orders').upsert(orderToRow(entry.order, entry.workspaceId), { onConflict: 'id', ignoreDuplicates: true }).select('id')
+      if (error) throw error
+      updatePendingOrders((current) => current.filter((item) => item.order.id !== entry.order.id))
+      setNotice('Order saved to the shared workspace.')
+      if (data?.length) {
+        void supabase.functions.invoke('notify-new-order', { body: { orderId: entry.order.id } }).then(({ data: notification, error: notificationError }) => {
+          if (notificationError) setNotice('Order saved, but phone notifications could not be sent.')
+          else if (notification?.sent) setNotice(`Order saved and ${notification.sent} phone notification${notification.sent === 1 ? '' : 's'} sent.`)
+        })
+      }
+    } catch (error) {
+      const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : 'The order could not reach the shared database.'
+      updatePendingOrders((current) => current.map((item) => item.order.id === entry.order.id ? { ...item, status: 'failed', lastError: message } : item))
+      setNotice(message)
+    } finally {
+      syncingOrderIds.current.delete(entry.order.id)
+    }
+  }
+
   async function addOrder(form: HTMLFormElement) {
     const values = new FormData(form)
     const product = products.find((item) => item.id === values.get('product'))
@@ -434,20 +617,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: isConfirmedOrder(status) ? confirmationBonusFor(confirmationEmployee, items) : 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
     setOrders((all) => [order, ...all])
+    setShowOrder(false)
     if (supabase && workspaceId) {
-      const { error } = await supabase.from('orders').insert({ id: order.id, workspace_id: workspaceId, client_name: order.client, phone: order.phone, address: order.address, location_url: order.locationUrl || null, items: order.items, status: order.status, payment_status: order.paymentStatus, assigned_to: order.assignedTo || null, delivery_charge: order.deliveryCharge, other_expense: order.otherExpense, notes: order.notes, delivered_at: order.deliveredAt ?? null, confirmation_employee_id: order.confirmationEmployeeId ?? null, confirmation_bonus: order.confirmationBonus ?? 0, confirmed_at: order.confirmedAt ?? null })
-      if (error) {
-        setOrders((all) => all.filter((item) => item.id !== order.id))
-        setNotice(error.message)
-        return
-      }
-      const { data: notification, error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: order.id } })
-      setShowOrder(false)
-      if (notificationError) setNotice('Order added, but phone notifications could not be sent.')
-      else setNotice(notification?.sent ? `Order added and ${notification.sent} phone notification${notification.sent === 1 ? '' : 's'} sent.` : 'Order added to the shared workspace.')
+      const pending: PendingOrder = { workspaceId, order, status: 'saving' }
+      updatePendingOrders((current) => [pending, ...current.filter((entry) => entry.order.id !== order.id)])
+      void syncPendingOrder(pending)
       return
     }
-    setShowOrder(false); setNotice('Order added to this browser preview.')
+    setNotice('Order added to this browser preview.')
   }
 
   async function addProduct(form: HTMLFormElement) {
@@ -654,11 +831,19 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   }
 
   const displayName = devDemo ? 'Amina Benali' : String(session?.user.user_metadata?.display_name || session?.user.email?.split('@')[0] || 'Team member')
+  const failedPendingOrders = pendingOrders.filter((entry) => entry.status === 'failed')
+  const savingPendingOrders = pendingOrders.filter((entry) => entry.status === 'saving')
+  const failedResources = Object.keys(resourceErrors) as ResourceName[]
+  const resourcesLoading = Object.values(resourcePhases).some((phase) => phase === 'loading')
+
+  if (supabase && session && workspaceStatus === 'checking') return <AppBootScreen />
+  if (supabase && session && workspaceStatus === 'error') return <AppBootScreen error={workspaceError} retry={() => void loadCloud()} />
+  if (supabase && session && workspaceStatus === 'missing') return <WorkspaceScreen onReady={loadCloud} />
 
   return <main className={`app-shell ${dark ? 'theme-dark' : 'theme-light'}`}>
-    {supabase && session && !workspaceId ? <WorkspaceScreen onReady={loadCloud} /> : <>
     <DesktopSidebar tab={tab} setTab={setTab} displayName={displayName} dark={dark} toggleTheme={() => setDark(!dark)} />
-    {tab !== 'map' && <div className="ledger-scroll"><div className="ledger-content">
+    {(failedPendingOrders.length > 0 || savingPendingOrders.length > 0 || failedResources.length > 0 || resourcesLoading) && <div className={`sync-banner ${failedPendingOrders.length || failedResources.length ? 'has-error' : ''}`} role="status" aria-live="polite">{failedPendingOrders.length > 0 ? <><WarningCircle weight="fill" /><span><b>{failedPendingOrders.length} order{failedPendingOrders.length === 1 ? '' : 's'} waiting to sync</b><small>Your order is safe on this device.</small></span><button onClick={() => failedPendingOrders.forEach((entry) => void syncPendingOrder(entry))}>Retry</button></> : failedResources.length > 0 ? <><WarningCircle weight="fill" /><span><b>Some data could not refresh</b><small>Showing the last saved information.</small></span><button onClick={() => void refreshWorkspaceData()}>Retry</button></> : savingPendingOrders.length > 0 ? <><ArrowsClockwise className="sync-spinner" /><span><b>Saving {savingPendingOrders.length === 1 ? 'order' : `${savingPendingOrders.length} orders`}…</b><small>You can keep working.</small></span></> : <><ArrowsClockwise className="sync-spinner" /><span><b>Refreshing shared data…</b><small>Available screens remain usable.</small></span></>}</div>}
+    {tab !== 'map' && <FeatureBoundary resetKey={tab}><div className="ledger-scroll"><div className="ledger-content">
     {tab === 'orders' && <section className="page quiet-orders mobile-orders-view">
       <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className="square-action" aria-label="Open settings" onClick={() => setTab('settings')}><GearSix /></button><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
       <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
@@ -667,7 +852,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         const count = filter.value === 'All' ? selectedRangeOrders.length : selectedRangeOrders.filter((order) => order.status === filter.value).length
         return <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}><span>{filter.label}</span><small>{count}</small></button>
       })}</div>
-      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
+      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && resourcePhases.orders === 'loading' ? <DataLoading label="Loading orders" /> : !visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
     {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
@@ -707,9 +892,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="account-actions"><button onClick={() => void loadCloud()}><ArrowsClockwise />Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}><SignOut />Sign out</button></section>
     </section>}
 
-    </div></div>}
+    </div></div></FeatureBoundary>}
 
-    {tab === 'map' && <section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section>}
+    {tab === 'map' && <FeatureBoundary resetKey={tab}><section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section></FeatureBoundary>}
 
     <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders' || tab === 'settings'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
     {tab === 'orders' && <button className="ledger-fab mobile-only-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
@@ -725,7 +910,6 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost) => restockProduct(restockingProduct, quantity, unitCost)} />}
     {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
     {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank"><NavigationArrow />Navigate</a></article>)}</div></Modal>}
-    </>}
     {showExitHint && <div className="exit-hint" role="status" aria-live="polite">Press back again to exit</div>}
   </main>
 }
@@ -917,6 +1101,14 @@ function WorkspaceScreen({ onReady }: { onReady: () => Promise<void> }) {
     if (error) setMessage(error.message); else await onReady()
   }
   return <main className="gate"><p className="eyebrow">FIRST-TIME SETUP</p><h1>{mode === 'create' ? 'Create your shared workspace' : 'Join your partner'}</h1><p>{mode === 'create' ? 'You will receive a code to share with your friend.' : 'Enter the code shown in your partner’s app.'}</p><form className="form auth-form" onSubmit={submit}><label className="form-field"><span>{mode === 'create' ? 'Business name' : 'Workspace code'}</span><input name="value" required /></label><button className="primary full">{mode === 'create' ? 'Create workspace' : 'Join workspace'}</button></form><button className="link-button" onClick={() => setMode(mode === 'create' ? 'join' : 'create')}>{mode === 'create' ? 'I have a code' : 'I need to create one'}</button>{message && <p className="message">{message}</p>}</main>
+}
+
+function AppBootScreen({ error, retry }: { error?: string; retry?: () => void }) {
+  return <main className="gate app-boot" aria-live="polite"><img src="/icon-192.png" alt="" /><p className="eyebrow">TANGER ORDERS</p><h1>{error ? 'Could not open your workspace' : 'Opening your workspace…'}</h1><p>{error ? 'Your saved information is untouched. Check your connection and try again.' : 'Loading your shared orders and settings.'}</p>{error ? <button className="primary" onClick={retry}><ArrowsClockwise />Try again</button> : <span className="boot-loader" aria-hidden="true" />}{error && <small>{error}</small>}</main>
+}
+
+function DataLoading({ label }: { label: string }) {
+  return <div className="data-loading" role="status"><span /><span /><span /><p>{label}…</p></div>
 }
 
 function DeliveryMap({ orders }: { orders: Order[] }) {

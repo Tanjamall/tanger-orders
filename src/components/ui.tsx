@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { ArrowLeft, ChartBar, ClipboardText, Cube, MapPin, Moon, Sun, UsersThree, X } from '@phosphor-icons/react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { ArrowLeft, ChartBar, ClipboardText, Cube, MapPin, Moon, Sun, UsersThree, Warning as WarningTriangle, X } from '@phosphor-icons/react'
 
 export function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark?: boolean; toggleTheme?: () => void; actions?: ReactNode; back?: () => void }) {
   return <header className="ledger-header">
@@ -23,4 +23,25 @@ export function EmptyState({ icon, title, copy }: { icon: ReactNode; title: stri
 
 export function Modal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
   return <div className="modal-backdrop" onMouseDown={close}><section className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button aria-label="Close" onClick={close}><X /></button></div>{children}</section></div>
+}
+
+export class FeatureBoundary extends Component<{ children: ReactNode; resetKey: string }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Tanger Orders screen error:', error, info)
+  }
+
+  componentDidUpdate(previous: Readonly<{ children: ReactNode; resetKey: string }>) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) this.setState({ failed: false })
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children
+    return <section className="feature-fallback" role="alert"><WarningTriangle /><h2>This screen had a problem</h2><p>The rest of Tanger Orders is still running. Try this screen again.</p><button className="primary" onClick={() => this.setState({ failed: false })}>Try again</button></section>
+  }
 }

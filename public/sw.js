@@ -1,4 +1,4 @@
-const CACHE = 'tanger-orders-v5'
+const CACHE = 'tanger-orders-v6'
 const ASSETS = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
