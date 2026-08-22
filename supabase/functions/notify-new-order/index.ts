@@ -6,6 +6,12 @@ type PushSubscriptionRow = { id: string; endpoint: string; p256dh: string; auth:
 type AndroidDeviceRow = { id: string; device_token: string }
 type FirebaseServiceAccount = { project_id: string; client_email: string; private_key: string; token_uri?: string }
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
 function firstConfiguredKey(environmentName: string) {
   const value = Deno.env.get(environmentName)
   if (!value) return undefined
@@ -16,7 +22,7 @@ function firstConfiguredKey(environmentName: string) {
 }
 
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 }
 
 function base64Url(value: Uint8Array | string) {
@@ -87,6 +93,7 @@ async function sendAndroidNotification(account: FirebaseServiceAccount, accessTo
 }
 
 Deno.serve(async (request) => {
+  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
