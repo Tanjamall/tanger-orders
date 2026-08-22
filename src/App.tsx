@@ -50,6 +50,7 @@ import { DesktopOrdersView, DesktopSidebar } from './features/orders/DesktopOrde
 import { OrderCard, OrderForm } from './features/orders/OrderComponents'
 import {
   bundleStock,
+  confirmationBonusFor,
   dateKey,
   dateStamp,
   isConfirmedOrder,
@@ -70,6 +71,7 @@ import {
   shortDate,
   uid,
   type AppTab,
+  type BonusBasis,
   type ConfirmationEmployee,
   type DateRange,
 } from './domain/orders'
@@ -83,7 +85,7 @@ import {
   type DevicePosition,
 } from './nativePlatform'
 import {
-  consumePendingPushOrderId,
+  consumePendingPushOrderIds,
   disablePushNotifications,
   enablePushNotifications,
   getPushNotificationState,
@@ -180,29 +182,20 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(() => devDemo ? 'TNG-4821' : null)
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>(() => devDemo ? [{ id: 'demo-workspace', name: 'Tanger Orders', join_code: 'TNG-4821', is_owner: true }] : [])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
-  const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>(() => devDemo ? [{ id: 'demo-amina', name: 'Amina', bonus: 5, active: true }, { id: 'demo-karim', name: 'Karim', bonus: 5, active: true }] : [])
+  const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>(() => devDemo ? [{ id: 'demo-amina', name: 'Amina', bonus: 5, bonusBasis: 'per_order', active: true }, { id: 'demo-karim', name: 'Karim', bonus: 5, bonusBasis: 'per_item', active: true }] : [])
   const [showConfirmationTeam, setShowConfirmationTeam] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
   const [pushState, setPushState] = useState<PushNotificationState>('prompt')
   const [pushBusy, setPushBusy] = useState(false)
-  const [pushMessage, setPushMessage] = useState('Get an alert when another admin adds an order.')
-  const [pendingPushOrderId, setPendingPushOrderId] = useState(consumePendingPushOrderId)
+  const [pushMessage, setPushMessage] = useState('Get an alert when another admin adds or delivers an order.')
+  const [highlightedPushOrderIds, setHighlightedPushOrderIds] = useState<string[]>(consumePendingPushOrderIds)
 
-  useEffect(() => listenForPushNotificationOrders(setPendingPushOrderId), [])
-  useEffect(() => {
-    if (!pendingPushOrderId) return
-    const order = orders.find((item) => item.id === pendingPushOrderId)
-    if (!order) return
-    const day = dateKey(order.createdAt)
-    setTab('orders')
-    setQuery('')
-    setStatusFilter('All')
-    setOrderRange({ start: day, end: day })
-    setEditingOrder(order)
-    setPendingPushOrderId(null)
-  }, [orders, pendingPushOrderId])
+  useEffect(() => listenForPushNotificationOrders((orderId) => {
+    setHighlightedPushOrderIds((current) => current.includes(orderId) ? current : [...current, orderId])
+  }), [])
+  useEffect(() => { if (highlightedPushOrderIds.length) setTab('orders') }, [highlightedPushOrderIds.length])
 
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-orders', JSON.stringify(orders)) }, [orders, devDemo])
   useEffect(() => { if (!devDemo) localStorage.setItem('tanger-products', JSON.stringify(products)) }, [products, devDemo])
@@ -242,7 +235,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     try {
       await enablePushNotifications(workspaceId, session.user.id)
       setPushState('enabled')
-      setPushMessage('This phone will be notified when another admin adds an order.')
+      setPushMessage('This phone will be notified when another admin adds or delivers an order.')
     } catch (error) {
       const state = await getPushNotificationState().catch(() => 'unsupported' as const)
       setPushState(state)
@@ -285,7 +278,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const { data: memberships } = await supabase.rpc('list_my_workspaces')
     setWorkspaces(memberships ?? [])
     setProducts(productRows.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
-    setConfirmationEmployees(employeeRows.data.map((row: any) => ({ id: row.id, name: row.name, bonus: Number(row.bonus_per_confirmation), active: row.active })))
+    setConfirmationEmployees(employeeRows.data.map((row: any) => ({ id: row.id, name: row.name, bonus: Number(row.bonus_per_confirmation), bonusBasis: row.bonus_basis === 'per_item' ? 'per_item' : 'per_order', active: row.active })))
     setInventoryBatches(batchRows.data.map((row: any) => ({ id: row.id, productId: row.product_id, unitCost: Number(row.unit_cost), originalQuantity: row.original_quantity, remainingQuantity: row.remaining_quantity, receivedAt: row.received_at, source: row.source })))
     setOrders(orderRows.data.map((row: any) => ({ id: row.id, client: row.client_name, phone: row.phone, address: row.address, locationUrl: row.location_url ?? undefined, items: row.items, status: normalizeStatus(row.status), paymentStatus: row.payment_status, assignedTo: row.assigned_to ?? '', deliveryCharge: Number(row.delivery_charge), otherExpense: Number(row.other_expense), notes: row.notes, createdAt: row.created_at, deliveredAt: row.delivered_at ?? undefined, confirmationEmployeeId: row.confirmation_employee_id ?? undefined, confirmationBonus: Number(row.confirmation_bonus ?? 0), confirmedAt: row.confirmed_at ?? undefined })))
     setNotice('Live shared data is connected.')
@@ -304,7 +297,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     return () => { void client.removeChannel(channel) }
   }, [workspaceId])
 
-  const confirmationCost = (order: Order) => order.confirmationEmployeeId ? order.confirmationBonus ?? confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId)?.bonus ?? 0 : 0
+  const confirmationCost = (order: Order) => order.confirmationEmployeeId
+    ? order.confirmationBonus ?? confirmationBonusFor(confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId), order.items)
+    : 0
   const delivered = orders.filter((order) => order.status === 'Delivered')
   const profitOrders = delivered.filter((order) => {
     const orderDate = dateKey(order.deliveredAt || order.createdAt)
@@ -326,7 +321,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const employeeSummaries = confirmationEmployees.map((employee) => {
     const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt)
     const productNames = [...new Set(confirmations.flatMap((order) => order.items.map((item) => products.find((product) => product.id === item.productId)?.name).filter((name): name is string => Boolean(name))))]
-    return { employee, count: confirmations.length, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? employee.bonus), 0), productNames }
+    const itemCount = confirmations.reduce((sum, order) => sum + order.items.reduce((quantity, item) => quantity + item.quantity, 0), 0)
+    return { employee, count: confirmations.length, itemCount, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(employee, order.items)), 0), productNames }
   }).filter(({ employee, count }) => employee.active || count > 0)
   const selectedEmployee = confirmationEmployees.find((employee) => employee.id === selectedEmployeeId)
   const selectedEmployeeOrders = selectedEmployee ? orders.filter((order) => order.confirmationEmployeeId === selectedEmployee.id && order.confirmedAt).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
@@ -343,12 +339,23 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const orderRangeTitle = isWholeMonth(orderRange) ? monthLabel(orderRange.start) : rangeLabel(orderRange)
   const changeStatus = async (id: string, status: Status) => {
     const currentOrder = orders.find((order) => order.id === id)
+    const becameDelivered = currentOrder?.status !== 'Delivered' && status === 'Delivered'
     const deliveredAt = status === 'Delivered' ? currentOrder?.deliveredAt || new Date().toISOString() : undefined
     const confirmedAt = currentOrder?.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
     const employee = confirmationEmployees.find((item) => item.id === currentOrder?.confirmationEmployeeId)
-    const confirmationBonus = currentOrder?.confirmationBonus ?? (employee?.bonus || 0)
+    const confirmationBonus = currentOrder && isConfirmedOrder(status)
+      ? currentOrder.confirmedAt ? currentOrder.confirmationBonus ?? confirmationBonusFor(employee, currentOrder.items) : confirmationBonusFor(employee, currentOrder.items)
+      : 0
     setOrders((all) => all.map((order) => order.id === id ? { ...order, status, deliveredAt, confirmedAt, confirmationBonus } : order))
-    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null, confirmed_at: confirmedAt ?? null, confirmation_bonus: confirmationBonus }).eq('id', id); if (error) setNotice(error.message) }
+    if (supabase && workspaceId) {
+      const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null, confirmed_at: confirmedAt ?? null, confirmation_bonus: confirmationBonus }).eq('id', id)
+      if (error) { setNotice(error.message); return }
+      if (becameDelivered) {
+        const { data: notification, error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: id, event: 'delivered' } })
+        if (notificationError) setNotice('Order delivered, but phone notifications could not be sent.')
+        else setNotice(notification?.sent ? `Order delivered and ${notification.sent} phone notification${notification.sent === 1 ? '' : 's'} sent.` : 'Order marked as delivered.')
+      }
+    }
   }
 
   const deleteOrder = async (order: Order) => {
@@ -372,10 +379,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const createdAt = new Date().toISOString()
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
+    const items = [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }]
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: String(values.get('phone') || ''), address: String(values.get('address') || ''),
-      items: [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }], status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
-      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: confirmationEmployee?.bonus || 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
+      items, status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
+      assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: isConfirmedOrder(status) ? confirmationBonusFor(confirmationEmployee, items) : 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
     setOrders((all) => [order, ...all])
     if (supabase && workspaceId) {
@@ -422,14 +430,28 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const product = products.find((item) => item.id === values.get('product'))
     const quantity = Number(values.get('quantity')) || 1
     const status = values.get('status') as Status
+    const becameDelivered = editingOrder.status !== 'Delivered' && status === 'Delivered'
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const isSameConfirmer = confirmationEmployeeId === editingOrder.confirmationEmployeeId
     const confirmedAt = editingOrder.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
-    const confirmationBonus = confirmationEmployeeId ? (isSameConfirmer && editingOrder.confirmedAt ? editingOrder.confirmationBonus ?? confirmationEmployee?.bonus ?? 0 : confirmationEmployee?.bonus ?? 0) : 0
-    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
+    const updatedItems = product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items
+    const itemsUnchanged = JSON.stringify(updatedItems) === JSON.stringify(editingOrder.items)
+    const confirmationBonus = confirmationEmployeeId && isConfirmedOrder(status)
+      ? isSameConfirmer && itemsUnchanged && editingOrder.confirmedAt
+        ? editingOrder.confirmationBonus ?? confirmationBonusFor(confirmationEmployee, updatedItems)
+        : confirmationBonusFor(confirmationEmployee, updatedItems)
+      : 0
+    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: updatedItems, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
     setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
-    if (supabase && workspaceId) { const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id); if (error) setNotice(error.message) }
+    if (supabase && workspaceId) {
+      const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id)
+      if (error) { setNotice(error.message); return }
+      if (becameDelivered) {
+        const { error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: updated.id, event: 'delivered' } })
+        if (notificationError) setNotice('Order delivered, but phone notifications could not be sent.')
+      }
+    }
     setEditingOrder(null)
   }
 
@@ -524,13 +546,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const values = new FormData(form)
     const name = String(values.get('name') || '').trim()
     const bonus = Number(values.get('bonus'))
+    const bonusBasis = values.get('bonusBasis') === 'per_item' ? 'per_item' : 'per_order'
     if (!name) return
     if (!supabase) {
-      setConfirmationEmployees((all) => [...all, { id: uid(), name, bonus: Number.isFinite(bonus) ? Math.max(0, bonus) : 5, active: true }])
+      setConfirmationEmployees((all) => [...all, { id: uid(), name, bonus: Number.isFinite(bonus) ? Math.max(0, bonus) : 5, bonusBasis, active: true }])
       form.reset()
       return
     }
-    const { error } = await supabase.rpc('create_confirmation_employee', { employee_name: name, employee_bonus: Number.isFinite(bonus) ? Math.max(0, bonus) : 5 })
+    const { error } = await supabase.rpc('create_confirmation_employee', { employee_name: name, employee_bonus: Number.isFinite(bonus) ? Math.max(0, bonus) : 5, employee_bonus_basis: bonusBasis })
     if (error) { setNotice(error.message); return }
     form.reset(); await loadCloud()
   }
@@ -538,19 +561,23 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   async function editConfirmationEmployee(employee: ConfirmationEmployee) {
     const name = window.prompt('Employee name', employee.name)?.trim()
     if (!name) return
-    const bonusValue = window.prompt('Bonus for each confirmed order (DH)', String(employee.bonus))
+    const basisValue = window.prompt('Pay this employee by "order" or by "item"?', employee.bonusBasis === 'per_item' ? 'item' : 'order')?.trim().toLowerCase()
+    if (!basisValue) return
+    const bonusBasis: BonusBasis | null = basisValue === 'item' || basisValue === 'per_item' ? 'per_item' : basisValue === 'order' || basisValue === 'per_order' ? 'per_order' : null
+    if (!bonusBasis) { setNotice('Enter either “order” or “item” for the bonus basis.'); return }
+    const bonusValue = window.prompt(`Bonus for each confirmed ${bonusBasis === 'per_item' ? 'item' : 'order'} (DH)`, String(employee.bonus))
     if (bonusValue === null) return
     const bonus = Number(bonusValue)
     if (!Number.isFinite(bonus) || bonus < 0) { setNotice('Enter a valid bonus amount.'); return }
-    if (!supabase) { setConfirmationEmployees((all) => all.map((item) => item.id === employee.id ? { ...item, name, bonus } : item)); return }
-    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: name, employee_bonus: bonus, employee_active: employee.active })
+    if (!supabase) { setConfirmationEmployees((all) => all.map((item) => item.id === employee.id ? { ...item, name, bonus, bonusBasis } : item)); return }
+    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: name, employee_bonus: bonus, employee_bonus_basis: bonusBasis, employee_active: employee.active })
     if (error) { setNotice(error.message); return }
     await loadCloud()
   }
 
   async function toggleConfirmationEmployee(employee: ConfirmationEmployee) {
     if (!supabase) { setConfirmationEmployees((all) => all.map((item) => item.id === employee.id ? { ...item, active: !item.active } : item)); return }
-    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: employee.name, employee_bonus: employee.bonus, employee_active: !employee.active })
+    const { error } = await supabase.rpc('update_confirmation_employee', { employee_id: employee.id, employee_name: employee.name, employee_bonus: employee.bonus, employee_bonus_basis: employee.bonusBasis, employee_active: !employee.active })
     if (error) { setNotice(error.message); return }
     await loadCloud()
   }
@@ -590,10 +617,10 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         const count = filter.value === 'All' ? selectedRangeOrders.length : selectedRangeOrders.filter((order) => order.status === filter.value).length
         return <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}><span>{filter.label}</span><small>{count}</small></button>
       })}</div>
-      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
+      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
-    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} rangeOrders={selectedRangeOrders} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
+    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
@@ -614,20 +641,19 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
-        <PageHeader title={selectedEmployee.name} subtitle={selectedEmployee.active ? 'Active confirmation employee' : 'Inactive confirmation employee'} back={() => setSelectedEmployeeId(null)} />
-        <div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? selectedEmployee.bonus), 0))}</strong><small>{selectedEmployeeOrders.length} confirmed {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section><h3>Confirmation history</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => products.find((product) => product.id === item.productId)?.name ?? 'Product').join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? selectedEmployee.bonus)}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations yet" copy="Assign this employee when confirming an order." />}</div>
+        <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => void editConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button></>} />
+        <div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section><h3>Confirmation history</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations yet" copy="Assign this employee when confirming an order." />}</div>
       </> : <>
-        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" />
+        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" actions={<button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add employee</button>} />
         <p className="page-intro">Tap an employee to view confirmation history.</p>
-        <div className="employee-ledger">{employeeSummaries.map(({ employee, count, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{count} confirmed {count === 1 ? 'order' : 'orders'}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add confirmation employees from Settings." />}</div>
+        <div className="employee-ledger">{employeeSummaries.map(({ employee, count, itemCount, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{employee.bonusBasis === 'per_item' ? `${itemCount} confirmed ${itemCount === 1 ? 'item' : 'items'}` : `${count} confirmed ${count === 1 ? 'order' : 'orders'}`}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add confirmation employees from Settings." />}</div>
       </>}
     </section>}
 
     {tab === 'settings' && <section className="page settings-page">
-      <PageHeader title="Settings" subtitle="Workspaces, team, and app controls" back={() => setTab('orders')} />
+      <PageHeader title="Settings" subtitle="Workspaces, notifications, and app controls" back={() => setTab('orders')} />
       <section className="settings-section"><h2>Shared workspace</h2><p>Use this code to invite a partner.</p><button className="workspace-code" onClick={() => { if (workspaceCode) void navigator.clipboard.writeText(workspaceCode); setNotice('Workspace code copied.') }}><strong>{workspaceCode ?? 'Loading…'}</strong><Copy /></button><div className="workspace-list">{workspaces.map((workspace) => <div className={workspace.id === workspaceId ? 'current' : ''} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}><Buildings /><span>{workspace.name}{workspace.id === workspaceId && <small> · Current</small>}</span></button>{workspace.is_owner && <button className="danger-icon" aria-label={`Delete ${workspace.name}`} onClick={() => void deleteWorkspace(workspace.id, workspace.name)}><Trash /></button>}</div>)}</div><div className="settings-inline-actions"><button onClick={() => void manageWorkspace('create')}><Plus />Create workspace</button><button onClick={() => void manageWorkspace('join')}><UserPlus />Join workspace</button></div></section>
       <section className="settings-section notification-settings"><div className="settings-section-head"><div><h2>Order notifications</h2><p aria-live="polite">{pushMessage}</p></div><span className={`notification-state state-${pushState}`}>{pushState === 'enabled' ? <BellRinging weight="fill" /> : <BellSlash />}</span></div>{pushState === 'unsupported' && <p className="notification-help">Install the app on your Home Screen and open it over HTTPS to enable phone notifications.</p>}{pushState === 'denied' && <p className="notification-help">Notifications are blocked in this phone’s settings. Allow Tanger Orders, then reopen the app.</p>}<button className={`notification-toggle ${pushState === 'enabled' ? 'is-enabled' : ''}`} disabled={pushBusy || pushState === 'unsupported' || pushState === 'denied'} onClick={() => void (pushState === 'enabled' ? turnOffPushNotifications() : turnOnPushNotifications())}>{pushState === 'enabled' ? <><BellSlash />Turn off on this phone</> : <><BellRinging />{pushBusy ? 'Connecting…' : 'Enable on this phone'}</>}</button></section>
-      <section className="settings-section"><div className="settings-section-head"><div><h2>Confirmation team</h2><p>Admins can confirm orders with no bonus.</p></div><button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add</button></div><div className="team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><span className="team-avatar"><User /></span><div><h3>{employee.name}</h3><p>{money(employee.bonus)} per confirmation · <b>{employee.active ? 'Active' : 'Inactive'}</b></p></div><button aria-label={`Edit ${employee.name}`} onClick={() => void editConfirmationEmployee(employee)}><PencilSimple /></button><button aria-label={employee.active ? `Pause ${employee.name}` : `Activate ${employee.name}`} onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? <Pause /> : <Play />}</button></article>)}{!confirmationEmployees.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Add your confirmation team here." />}</div></section>
       <section className="account-actions"><button onClick={() => void loadCloud()}><ArrowsClockwise />Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}><SignOut />Sign out</button></section>
     </section>}
 
@@ -642,7 +668,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
-    {showConfirmationTeam && <Modal title="Confirmation team" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Add your confirmation staff here. Admin confirmations are always recorded with no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Bonus per confirmed order (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmation · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
+    {showConfirmationTeam && <Modal title="Manage employees" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Choose whether each employee earns a fixed amount per confirmed order or per item quantity. Admin confirmations have no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><label className="form-field"><span>Pay bonus by</span><select name="bonusBasis" defaultValue="per_order"><option value="per_order">Confirmed order</option><option value="per_item">Number of items</option></select></label><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmed {employee.bonusBasis === 'per_item' ? 'item' : 'order'} · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => void editConfirmationEmployee(employee)}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Product name</span><input required name="name" /></label><div className="form-row"><label className="form-field"><span>Buying cost</span><input required name="cost" type="number" /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" /></label></div><div className="form-row"><label className="form-field"><span>Opening stock</span><input required name="stock" type="number" /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue="3" /></label></div><button className="primary full">Save product</button></form></Modal>}
     {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Name</span><input required name="name" defaultValue={editingProduct.name} /></label>{!editingProduct.components && <><div className="form-row"><label className="form-field"><span>Stock</span><input required name="stock" type="number" min="0" step="1" defaultValue={editingProduct.stock} /></label><label className="form-field"><span>Active FIFO cost</span><input required name="cost" type="number" min="0" step="0.01" defaultValue={editingProduct.cost} /></label></div><label className="form-field"><span>Correction note <small>Optional</small></span><input name="correctionNote" placeholder="e.g. Restock quantity typo" /></label><p className="form-note">Corrections apply only to unsold stock. Delivered-order costs stay unchanged.</p></>}<div className="form-row"><label className="form-field"><span>Selling price</span><input required name="price" type="number" min="0" step="0.01" defaultValue={editingProduct.price} /></label>{!editingProduct.components && <label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" min="0" defaultValue={editingProduct.lowStockAt} /></label>}</div><button className="primary full">Save changes</button></form></Modal>}
     {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost) => restockProduct(restockingProduct, quantity, unitCost)} />}

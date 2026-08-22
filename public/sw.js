@@ -1,5 +1,5 @@
-const CACHE = 'tanger-orders-v4'
-const ASSETS = ['/', '/manifest.webmanifest', '/icon.svg']
+const CACHE = 'tanger-orders-v5'
+const ASSETS = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)))
@@ -24,9 +24,9 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(self.registration.showNotification(payload.title, {
     body: payload.body,
-    icon: '/icon.svg',
-    badge: '/icon.svg',
-    tag: payload.orderId ? `order-${payload.orderId}` : 'new-order',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: payload.orderId ? `${payload.event || 'created'}-order-${payload.orderId}` : 'order-update',
     renotify: true,
     data: { url: payload.orderId ? `/?orderId=${encodeURIComponent(payload.orderId)}` : '/', orderId: payload.orderId },
   }))

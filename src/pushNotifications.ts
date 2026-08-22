@@ -7,11 +7,34 @@ export const VAPID_PUBLIC_KEY = 'BLLTRrDIs-P208BFMaFTlmpWmNvKMK46pTI3O0efzqplHMZ
 export type PushNotificationState = 'unsupported' | 'prompt' | 'denied' | 'disabled' | 'enabled'
 
 const nativeTokenKey = 'tanger-orders:android-push-token'
-const pendingOrderKey = 'tanger-orders:pending-push-order'
+const pendingOrderKey = 'tanger-orders:pending-push-orders'
+const legacyPendingOrderKey = 'tanger-orders:pending-push-order'
 const nativeActionEvent = 'tanger-orders:open-push-order'
 let nativeListenersReady: Promise<void> | null = null
 let nativeContext: { workspaceId: string; userId: string } | null = null
 let registrationWaiter: { resolve: () => void; reject: (error: Error) => void } | null = null
+
+function pendingOrderIds() {
+  const legacy = localStorage.getItem(legacyPendingOrderKey)
+  try {
+    const parsed = JSON.parse(localStorage.getItem(pendingOrderKey) || '[]')
+    const stored = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string' && Boolean(value)) : []
+    return [...new Set(legacy ? [legacy, ...stored] : stored)]
+  } catch {
+    return legacy ? [legacy] : []
+  }
+}
+
+function savePendingOrderIds(orderIds: string[]) {
+  const unique = [...new Set(orderIds.filter(Boolean))]
+  if (unique.length) localStorage.setItem(pendingOrderKey, JSON.stringify(unique))
+  else localStorage.removeItem(pendingOrderKey)
+  localStorage.removeItem(legacyPendingOrderKey)
+}
+
+function queuePendingOrderId(orderId: string) {
+  savePendingOrderIds([...pendingOrderIds(), orderId])
+}
 
 function isNativeAndroid() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
@@ -50,13 +73,13 @@ async function ensureNativeListeners() {
     await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
       const orderId = typeof notification.data?.orderId === 'string' ? notification.data.orderId : ''
       if (!orderId) return
-      localStorage.setItem(pendingOrderKey, orderId)
+      queuePendingOrderId(orderId)
       window.dispatchEvent(new CustomEvent(nativeActionEvent, { detail: { orderId } }))
     })
     await PushNotifications.createChannel({
       id: 'order-updates',
-      name: 'New orders',
-      description: 'Alerts when another admin adds an order',
+      name: 'Order updates',
+      description: 'Alerts when another admin adds or delivers an order',
       importance: 4,
       vibration: true,
     })
@@ -68,24 +91,23 @@ export async function initializePushNotifications() {
   await ensureNativeListeners()
 }
 
-export function consumePendingPushOrderId() {
+export function consumePendingPushOrderIds() {
   const url = new URL(window.location.href)
   const fromUrl = url.searchParams.get('orderId')
-  const stored = localStorage.getItem(pendingOrderKey)
-  const orderId = fromUrl || stored
+  const orderIds = [...new Set([...(fromUrl ? [fromUrl] : []), ...pendingOrderIds()])]
   if (fromUrl) {
     url.searchParams.delete('orderId')
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`)
   }
-  if (stored) localStorage.removeItem(pendingOrderKey)
-  return orderId
+  savePendingOrderIds([])
+  return orderIds
 }
 
 export function listenForPushNotificationOrders(handler: (orderId: string) => void) {
   const listener = (event: Event) => {
     const orderId = (event as CustomEvent<{ orderId?: string }>).detail?.orderId
     if (orderId) {
-      localStorage.removeItem(pendingOrderKey)
+      savePendingOrderIds(pendingOrderIds().filter((value) => value !== orderId))
       handler(orderId)
     }
   }

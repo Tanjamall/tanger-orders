@@ -1,7 +1,8 @@
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from '../types'
 
 export type AppTab = 'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings'
-export type ConfirmationEmployee = { id: string; name: string; bonus: number; active: boolean }
+export type BonusBasis = 'per_order' | 'per_item'
+export type ConfirmationEmployee = { id: string; name: string; bonus: number; bonusBasis: BonusBasis; active: boolean }
 export type DateRange = { start: string; end: string }
 
 export const statuses: Status[] = ['New', 'Confirmed', 'Out for delivery', 'Delivered', 'Canceled']
@@ -12,6 +13,9 @@ export const orderFilters: { label: string; value: Status | 'All' }[] = [
 export const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
 
 export const money = (value: number) => `${Math.round(value)} DH`
+export const confirmationBonusFor = (employee: ConfirmationEmployee | undefined, items: Order['items']) => employee
+  ? employee.bonus * (employee.bonusBasis === 'per_item' ? items.reduce((sum, item) => sum + item.quantity, 0) : 1)
+  : 0
 export const uid = () => crypto.randomUUID()
 export const isConfirmedOrder = (status: Status) => ['Confirmed', 'Out for delivery', 'Delivered'].includes(status)
 export const normalizeStatus = (status: string): Status => status === 'Preparing' ? 'Confirmed' : status === 'Cancelled' ? 'Canceled' : status as Status

@@ -59,7 +59,7 @@ const sidebarItems: { value: AppTab; label: string; icon: ReactNode }[] = [
 export function DesktopSidebar({ tab, setTab, displayName, dark, toggleTheme }: DesktopSidebarProps) {
   return <aside className="desktop-sidebar" aria-label="Main navigation">
     <header>
-      <span className="desktop-brand-mark" aria-hidden="true">T</span>
+      <span className="desktop-brand-mark" aria-hidden="true"><img src="/icon-192.png" alt="" /></span>
       <div className="desktop-brand-copy"><strong>Tanger</strong><span>Operations ledger</span></div>
     </header>
     <nav>{sidebarItems.map((item) => <button key={item.value} title={item.label} className={tab === item.value ? 'active' : ''} onClick={() => setTab(item.value)}>{item.icon}<span>{item.label}</span></button>)}</nav>
@@ -74,6 +74,7 @@ export function DesktopSidebar({ tab, setTab, displayName, dark, toggleTheme }: 
 type DesktopOrdersViewProps = {
   orders: Order[]
   rangeOrders: Order[]
+  highlightedOrderIds: string[]
   deliveredCount: number
   rangeProfit: number
   rangeLabelText: string
@@ -92,7 +93,7 @@ type DesktopOrdersViewProps = {
   onDelete: (order: Order) => void
 }
 
-export function DesktopOrdersView({ orders, rangeOrders, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, planRoute, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
+export function DesktopOrdersView({ orders, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, planRoute, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const selected = orders.find((order) => order.id === selectedId) || orders[0] || null
@@ -124,7 +125,7 @@ export function DesktopOrdersView({ orders, rangeOrders, deliveredCount, rangePr
         <div className="desktop-filter-row" aria-label="Filter orders by status">{orderFilters.map((filter) => <button key={filter.value} className={statusFilter === filter.value ? 'active' : ''} onClick={() => setStatusFilter(filter.value)}>{filter.label}</button>)}</div>
         <div className="desktop-table-head"><span>Customer</span><span>Products</span><span>Status</span><span>Payment</span><span>Assignee</span><span>Total</span><span>Actions</span></div>
         <div className="desktop-table-rows">
-          {pagedOrders.map((order) => <DesktopOrderRow key={order.id} order={order} selected={selected?.id === order.id} products={products} members={members} onSelect={setSelectedId} onStatus={onStatus} onEdit={onEdit} onDelete={onDelete} />)}
+          {pagedOrders.map((order) => <DesktopOrderRow key={order.id} order={order} selected={selected?.id === order.id} highlighted={highlightedOrderIds.includes(order.id)} products={products} members={members} onSelect={setSelectedId} onStatus={onStatus} onEdit={onEdit} onDelete={onDelete} />)}
           {!orders.length && <DesktopEmptyState />}
         </div>
         {orders.length > 0 && <footer className="desktop-pagination"><span>Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, orders.length)} of {orders.length} orders</span><div><button aria-label="Previous page" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><CaretLeft /></button><b>{page}</b><span>of {pageCount}</span><button aria-label="Next page" disabled={page === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}><CaretRight /></button></div></footer>}
@@ -137,6 +138,7 @@ export function DesktopOrdersView({ orders, rangeOrders, deliveredCount, rangePr
 type DesktopOrderRowProps = {
   order: Order
   selected: boolean
+  highlighted: boolean
   products: Product[]
   members: Member[]
   onSelect: (id: string) => void
@@ -145,7 +147,7 @@ type DesktopOrderRowProps = {
   onDelete: (order: Order) => void
 }
 
-function DesktopOrderRow({ order, selected, products, members, onSelect, onStatus, onEdit, onDelete }: DesktopOrderRowProps) {
+function DesktopOrderRow({ order, selected, highlighted, products, members, onSelect, onStatus, onEdit, onDelete }: DesktopOrderRowProps) {
   const productLines = order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')
   const productCodes = order.items.map((item) => products.find((product) => product.id === item.productId)?.id.toUpperCase() ?? item.productId.toUpperCase()).join(' · ')
   const assignee = members.find((member) => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
@@ -153,7 +155,7 @@ function DesktopOrderRow({ order, selected, products, members, onSelect, onStatu
   const deleteDisabled = order.status === 'Delivered'
   const deleteLabel = deleteDisabled ? 'Delivered orders cannot be deleted because their stock cannot be restored' : `Delete order for ${order.client}`
 
-  return <article className={`desktop-order-row ${selected ? 'selected' : ''}`} onClick={() => onSelect(order.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(order.id) }} tabIndex={0}>
+  return <article className={`desktop-order-row ${selected ? 'selected' : ''} ${highlighted ? 'push-highlight' : ''}`} onClick={() => onSelect(order.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(order.id) }} tabIndex={0}>
     <div className="desktop-customer"><span className="desktop-customer-avatar">{order.client.slice(0, 1).toUpperCase()}</span><div><b>{order.client}</b><span>{order.phone}</span><small>{order.address}</small></div></div>
     <span className="desktop-product-copy" title={productLines}><b>{productLines}</b><small>SKU: {productCodes}</small></span>
     <StatusSelector order={order} onStatus={onStatus} stopPropagation />

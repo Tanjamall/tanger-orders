@@ -110,6 +110,7 @@ button:active { transform: scale(.96); }
 .order-row.tone-delivered { --tone: #43ad98; }
 .order-row.tone-canceled { --tone: var(--coral); }
 .order-row.tone-new { --tone: #7e8994; }
+.order-row.push-highlight { margin: 3px 0; padding: 16px 10px 15px; border-bottom-color: transparent; border-radius: 14px; background: color-mix(in srgb, var(--amber) 16%, var(--paper-raised)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 72%, var(--pine)); animation: push-highlight-enter .7s cubic-bezier(.22, .8, .28, 1) both; }
 .status-rail { position: relative; width: 2px; min-height: 100%; margin-left: 3px; background: var(--tone); }
 .status-rail i { position: absolute; top: 0; left: 50%; width: 10px; height: 10px; border: 2px solid var(--paper); border-radius: 50%; background: var(--tone); transform: translate(-50%, -40%); }
 .order-primary { min-width: 0; }
@@ -413,6 +414,7 @@ button:active { transform: scale(.96); }
 @keyframes heading-enter { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes content-enter { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes row-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes push-highlight-enter { 0% { opacity: .45; transform: scale(.985); box-shadow: inset 0 0 0 2px var(--amber), 0 0 0 7px color-mix(in srgb, var(--amber) 24%, transparent); } 100% { opacity: 1; transform: scale(1); } }
 @keyframes search-reveal { from { opacity: 0; transform: translateY(-6px) scaleY(.92); } to { opacity: 1; transform: translateY(0) scaleY(1); } }
 @keyframes fab-enter { from { opacity: 0; transform: translateY(14px) scale(.92); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes nav-pop { 0% { transform: scale(.82); } 65% { transform: scale(1.12); } 100% { transform: scale(1); } }
@@ -525,6 +527,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .desktop-order-row:hover { background: color-mix(in srgb, var(--paper-soft) 60%, transparent); }
   .desktop-order-row.selected { background: var(--paper-raised); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pine) 10%, transparent); }
   .desktop-order-row.selected::before { opacity: 1; }
+  .desktop-order-row.push-highlight { background: color-mix(in srgb, var(--amber) 14%, var(--paper-raised)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 70%, var(--pine)); animation: push-highlight-enter .7s cubic-bezier(.22, .8, .28, 1) both; }
+  .desktop-order-row.push-highlight::before { background: var(--amber); opacity: 1; }
   .desktop-customer { display: grid; grid-template-columns: 29px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
   .desktop-customer > div, .desktop-customer b, .desktop-customer span, .desktop-customer small { display: block; min-width: 0; }
   .desktop-customer-avatar { display: grid !important; place-items: center; width: 29px; height: 29px; border-radius: 50%; background: var(--mint); color: var(--pine); font: 600 10px "Fraunces", serif; }
@@ -619,6 +623,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   }
   .desktop-sidebar header { display: flex; align-items: center; gap: 0; min-height: 43px; padding: 0 7px 31px; }
   .desktop-brand-mark { display: grid !important; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 12px; background: var(--mint); color: var(--pine) !important; font: 700 24px/1 "Fraunces", serif !important; letter-spacing: -.04em !important; text-transform: none !important; transition: width .2s ease, flex-basis .2s ease, opacity .16s ease, transform .2s ease; }
+  .desktop-brand-mark img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
   .desktop-brand-copy { width: 0; min-width: 0; overflow: hidden; opacity: 0; transform: translateX(-7px); transition: width .22s ease, opacity .18s ease, transform .22s ease; }
   .desktop-brand-copy strong, .desktop-brand-copy span { display: block; white-space: nowrap; }
   .desktop-brand-copy strong { color: var(--pine); font: 700 29px/1 "Fraunces", serif; letter-spacing: -.035em; }

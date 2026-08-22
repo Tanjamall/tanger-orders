@@ -5,6 +5,8 @@ import webpush from 'web-push'
 type PushSubscriptionRow = { id: string; endpoint: string; p256dh: string; auth: string }
 type AndroidDeviceRow = { id: string; device_token: string }
 type FirebaseServiceAccount = { project_id: string; client_email: string; private_key: string; token_uri?: string }
+type NotificationEvent = 'created' | 'delivered'
+type OrderItem = { productId?: string; quantity?: number; unitPrice?: number }
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -72,7 +74,7 @@ async function firebaseAccessToken(account: FirebaseServiceAccount) {
   return result.access_token
 }
 
-async function sendAndroidNotification(account: FirebaseServiceAccount, accessToken: string, device: AndroidDeviceRow, title: string, body: string, orderId: string) {
+async function sendAndroidNotification(account: FirebaseServiceAccount, accessToken: string, device: AndroidDeviceRow, title: string, body: string, orderId: string, event: NotificationEvent) {
   const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -80,8 +82,8 @@ async function sendAndroidNotification(account: FirebaseServiceAccount, accessTo
       message: {
         token: device.device_token,
         notification: { title, body },
-        data: { orderId },
-        android: { priority: 'high', notification: { channel_id: 'order-updates', tag: `order-${orderId}` } },
+        data: { orderId, event },
+        android: { priority: 'high', notification: { channel_id: 'order-updates', tag: `${event}-order-${orderId}`, icon: 'ic_stat_orders', color: '#133B32' } },
       },
     }),
   })
@@ -115,22 +117,49 @@ Deno.serve(async (request) => {
   if (userError || !userData.user) return json({ error: 'Invalid session' }, 401)
 
   let orderId = ''
-  try { orderId = ((await request.json()) as { orderId?: string }).orderId?.trim() ?? '' }
+  let event: NotificationEvent = 'created'
+  try {
+    const body = (await request.json()) as { orderId?: string; event?: string }
+    orderId = body.orderId?.trim() ?? ''
+    if (body.event === 'delivered') event = 'delivered'
+    else if (body.event && body.event !== 'created') return json({ error: 'event must be created or delivered' }, 400)
+  }
   catch { return json({ error: 'Invalid request body' }, 400) }
   if (!orderId) return json({ error: 'orderId is required' }, 400)
 
   const admin = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: order, error: orderError } = await admin.from('orders')
-    .select('id, workspace_id, client_name, items, created_by, notification_sent_at')
-    .eq('id', orderId).eq('created_by', userData.user.id).maybeSingle()
+    .select('id, workspace_id, items, status, created_by, notification_sent_at, delivered_by, delivery_notification_sent_at')
+    .eq('id', orderId).maybeSingle()
   if (orderError) { console.error('Could not read order', orderError); return json({ error: 'Could not read order' }, 500) }
-  if (!order) return json({ error: 'Order not found or not created by this admin' }, 404)
-  if (order.notification_sent_at) return json({ sent: 0, alreadySent: true })
+  const actorId = event === 'delivered' ? order?.delivered_by : order?.created_by
+  const claimColumn = event === 'delivered' ? 'delivery_notification_sent_at' : 'notification_sent_at'
+  if (!order || actorId !== userData.user.id) return json({ error: `Order not found or not ${event} by this admin` }, 404)
+  if (event === 'delivered' && order.status !== 'Delivered') return json({ error: 'Order is not delivered' }, 409)
+  if (order[claimColumn]) return json({ sent: 0, alreadySent: true })
 
   const { data: claimedOrder, error: claimError } = await admin.from('orders')
-    .update({ notification_sent_at: new Date().toISOString() }).eq('id', order.id).is('notification_sent_at', null).select('id').maybeSingle()
+    .update({ [claimColumn]: new Date().toISOString() }).eq('id', order.id).eq(event === 'delivered' ? 'delivered_by' : 'created_by', actorId).is(claimColumn, null).select('id').maybeSingle()
   if (claimError) { console.error('Could not claim notification', claimError); return json({ error: 'Could not prepare notifications' }, 500) }
   if (!claimedOrder) return json({ sent: 0, alreadySent: true })
+
+  const items = Array.isArray(order.items) ? order.items as OrderItem[] : []
+  const productIds = [...new Set(items.map((item) => item.productId).filter((id): id is string => Boolean(id)))]
+  const [actorResult, productResult] = await Promise.all([
+    admin.from('profiles').select('display_name').eq('id', actorId).maybeSingle(),
+    productIds.length
+      ? admin.from('products').select('id, name').eq('workspace_id', order.workspace_id).in('id', productIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+  ])
+  if (actorResult.error || productResult.error) {
+    console.error('Could not load notification details', actorResult.error || productResult.error)
+    return json({ error: 'Could not prepare notification details' }, 500)
+  }
+  const fallbackName = typeof userData.user.user_metadata?.display_name === 'string'
+    ? userData.user.user_metadata.display_name
+    : userData.user.email?.split('@')[0] || 'An admin'
+  const actorName = actorResult.data?.display_name?.trim() || fallbackName
+  const productNames = new Map((productResult.data ?? []).map((product) => [product.id, product.name]))
 
   const [webResult, androidResult] = await Promise.all([
     admin.from('push_subscriptions').select('id, endpoint, p256dh, auth').eq('workspace_id', order.workspace_id).neq('user_id', userData.user.id),
@@ -141,12 +170,13 @@ Deno.serve(async (request) => {
     return json({ error: 'Could not load notification devices' }, 500)
   }
 
-  const total = Array.isArray(order.items)
-    ? order.items.reduce((sum: number, item: { quantity?: number; unitPrice?: number }) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0)
-    : 0
-  const title = 'New order added'
-  const body = `${order.client_name} · ${Math.round(total)} DH`
-  const payload = JSON.stringify({ title, body, orderId: order.id })
+  const title = event === 'delivered' ? `${actorName} delivered an order` : `${actorName} added a new order`
+  const body = items.map((item) => {
+    const quantity = Math.max(1, Number(item.quantity || 1))
+    const price = quantity * Number(item.unitPrice || 0)
+    return `${productNames.get(item.productId || '') || 'Product'} × ${quantity} · ${Math.round(price)} DH`
+  }).join(' • ') || 'Order updated'
+  const payload = JSON.stringify({ title, body, orderId: order.id, event })
 
   const webSubscriptions = (webResult.data ?? []) as PushSubscriptionRow[]
   const expiredWebIds: string[] = []
@@ -175,7 +205,7 @@ Deno.serve(async (request) => {
   if (androidDevices.length && account) {
     try {
       const accessToken = await firebaseAccessToken(account)
-      const deliveries = await Promise.all(androidDevices.map((device) => sendAndroidNotification(account, accessToken, device, title, body, order.id)))
+      const deliveries = await Promise.all(androidDevices.map((device) => sendAndroidNotification(account, accessToken, device, title, body, order.id, event)))
       androidSent = deliveries.filter((delivery) => delivery.sent).length
       androidFailed = deliveries.length - androidSent
       deliveries.forEach((delivery, index) => { if (delivery.expired) expiredAndroidIds.push(androidDevices[index].id) })
@@ -196,5 +226,5 @@ Deno.serve(async (request) => {
   const webSent = webDeliveries.filter((result) => result.status === 'fulfilled').length
   const sent = webSent + androidSent
   const failed = webSubscriptions.length - webSent + androidFailed
-  return json({ sent, failed, webSent, androidSent, androidConfigured: Boolean(account) })
+  return json({ sent, failed, webSent, androidSent, androidConfigured: Boolean(account), event })
 })
