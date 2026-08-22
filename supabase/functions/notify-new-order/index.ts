@@ -101,7 +101,7 @@ Deno.serve(async (request) => {
   const secretKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SECRET_KEY') ?? firstConfiguredKey('SUPABASE_SECRET_KEYS')
   const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY')
   const authorization = request.headers.get('Authorization')
-  if (!supabaseUrl || !publishableKey || !secretKey || !vapidPrivateKey) {
+  if (!supabaseUrl || !publishableKey || !secretKey) {
     console.error('Push sender is missing required environment variables')
     return json({ error: 'Notification service is not configured' }, 503)
   }
@@ -149,18 +149,23 @@ Deno.serve(async (request) => {
   const payload = JSON.stringify({ title, body, orderId: order.id })
 
   const webSubscriptions = (webResult.data ?? []) as PushSubscriptionRow[]
-  webpush.setVapidDetails('mailto:notifications@tanjamall.com', 'BLLTRrDIs-P208BFMaFTlmpWmNvKMK46pTI3O0efzqplHMZZi2di7eK1kUDATMI6lULIeC2ZuxHPMIOclBoZJTM', vapidPrivateKey)
   const expiredWebIds: string[] = []
-  const webDeliveries = await Promise.allSettled(webSubscriptions.map(async (subscription) => {
-    try {
-      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, { TTL: 300, urgency: 'high' })
-    } catch (error) {
-      const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number((error as { statusCode: unknown }).statusCode) : 0
-      if (statusCode === 404 || statusCode === 410) expiredWebIds.push(subscription.id)
-      console.error('Web Push delivery failed', { subscriptionId: subscription.id, statusCode })
-      throw error
-    }
-  }))
+  let webDeliveries: PromiseSettledResult<void>[] = []
+  if (webSubscriptions.length && vapidPrivateKey) {
+    webpush.setVapidDetails('mailto:notifications@tanjamall.com', 'BLLTRrDIs-P208BFMaFTlmpWmNvKMK46pTI3O0efzqplHMZZi2di7eK1kUDATMI6lULIeC2ZuxHPMIOclBoZJTM', vapidPrivateKey)
+    webDeliveries = await Promise.allSettled(webSubscriptions.map(async (subscription) => {
+      try {
+        await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, { TTL: 300, urgency: 'high' })
+      } catch (error) {
+        const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number((error as { statusCode: unknown }).statusCode) : 0
+        if (statusCode === 404 || statusCode === 410) expiredWebIds.push(subscription.id)
+        console.error('Web Push delivery failed', { subscriptionId: subscription.id, statusCode })
+        throw error
+      }
+    }))
+  } else if (webSubscriptions.length) {
+    console.error('Web Push subscriptions exist but VAPID_PRIVATE_KEY is not configured')
+  }
 
   const androidDevices = (androidResult.data ?? []) as AndroidDeviceRow[]
   const account = firebaseServiceAccount()
@@ -190,6 +195,6 @@ Deno.serve(async (request) => {
 
   const webSent = webDeliveries.filter((result) => result.status === 'fulfilled').length
   const sent = webSent + androidSent
-  const failed = webDeliveries.length - webSent + androidFailed
+  const failed = webSubscriptions.length - webSent + androidFailed
   return json({ sent, failed, webSent, androidSent, androidConfigured: Boolean(account) })
 })
