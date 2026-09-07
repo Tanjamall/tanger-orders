@@ -29,6 +29,22 @@ export const monthStartKey = () => {
   return dateKey(new Date(today.getFullYear(), today.getMonth(), 1))
 }
 export const monthEndKey = (value = new Date()) => dateKey(new Date(value.getFullYear(), value.getMonth() + 1, 0))
+export const previousMonthRange = (value = new Date()): DateRange => ({
+  start: dateKey(new Date(value.getFullYear(), value.getMonth() - 1, 1)),
+  end: dateKey(new Date(value.getFullYear(), value.getMonth(), 0)),
+})
+const businessDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Casablanca', year: 'numeric', month: '2-digit', day: '2-digit' })
+export const eventDateKey = (value: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  const parts = businessDateFormatter.formatToParts(new Date(value))
+  const part = (type: string) => parts.find((item) => item.type === type)?.value
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+export const isOpenOrder = (order: Order) => order.status !== 'Delivered' && order.status !== 'Canceled'
+export const orderActivityDate = (order: Order) => order.status === 'Delivered' ? order.deliveredAt || order.createdAt : order.createdAt
+export const inDateRange = (day: string, range: DateRange) => (!range.start || day >= range.start) && (!range.end || day <= range.end)
+export const ordersForRange = (orders: Order[], range: DateRange) => orders.filter((order) => inDateRange(eventDateKey(orderActivityDate(order)), range))
+export const carriedOrders = (orders: Order[], range: DateRange, monthStart = monthStartKey()) => orders.filter((order) => isOpenOrder(order) && eventDateKey(order.createdAt) < monthStart && !inDateRange(eventDateKey(order.createdAt), range))
 export const dateStamp = (key: string) => {
   const [year, month, day] = key.split('-')
   return `${day}/${month}/${year}`

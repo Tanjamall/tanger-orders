@@ -5,7 +5,7 @@ import webpush from 'web-push'
 type PushSubscriptionRow = { id: string; endpoint: string; p256dh: string; auth: string }
 type AndroidDeviceRow = { id: string; device_token: string }
 type FirebaseServiceAccount = { project_id: string; client_email: string; private_key: string; token_uri?: string }
-type NotificationEvent = 'created' | 'delivered'
+type NotificationEvent = 'created' | 'delivered' | 'notes'
 type OrderItem = { productId?: string; quantity?: number; unitPrice?: number }
 
 const corsHeaders = {
@@ -118,28 +118,39 @@ Deno.serve(async (request) => {
 
   let orderId = ''
   let event: NotificationEvent = 'created'
+  let notesRevision = ''
   try {
-    const body = (await request.json()) as { orderId?: string; event?: string }
+    const body = (await request.json()) as { orderId?: string; event?: string; notesRevision?: string }
     orderId = body.orderId?.trim() ?? ''
-    if (body.event === 'delivered') event = 'delivered'
-    else if (body.event && body.event !== 'created') return json({ error: 'event must be created or delivered' }, 400)
+    if (body.event === 'delivered' || body.event === 'notes') event = body.event
+    else if (body.event && body.event !== 'created') return json({ error: 'event must be created, delivered or notes' }, 400)
+    notesRevision = body.notesRevision?.trim() ?? ''
   }
   catch { return json({ error: 'Invalid request body' }, 400) }
   if (!orderId) return json({ error: 'orderId is required' }, 400)
+  if (event === 'notes' && !notesRevision) return json({ error: 'notesRevision is required' }, 400)
 
   const admin = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: order, error: orderError } = await admin.from('orders')
-    .select('id, workspace_id, items, status, created_by, notification_sent_at, delivered_by, delivery_notification_sent_at')
+    .select('id, workspace_id, client_name, notes, notes_revision, notes_updated_by, notes_change_kind, notes_notification_sent_at, items, status, created_by, notification_sent_at, delivered_by, delivery_notification_sent_at')
     .eq('id', orderId).maybeSingle()
   if (orderError) { console.error('Could not read order', orderError); return json({ error: 'Could not read order' }, 500) }
-  const actorId = event === 'delivered' ? order?.delivered_by : order?.created_by
-  const claimColumn = event === 'delivered' ? 'delivery_notification_sent_at' : 'notification_sent_at'
+  const actorColumn = event === 'notes' ? 'notes_updated_by' : event === 'delivered' ? 'delivered_by' : 'created_by'
+  const actorId = order?.[actorColumn]
+  const claimColumn = event === 'notes' ? 'notes_notification_sent_at' : event === 'delivered' ? 'delivery_notification_sent_at' : 'notification_sent_at'
   if (!order || actorId !== userData.user.id) return json({ error: `Order not found or not ${event} by this admin` }, 404)
+  if (event === 'notes') {
+    if (order.notes_revision !== notesRevision) return json({ error: 'Note has changed since this save' }, 409)
+    const { data: visibleOrder, error: accessError } = await userClient.from('orders').select('id').eq('id', order.id).maybeSingle()
+    if (accessError || !visibleOrder) return json({ error: 'Order access required' }, 403)
+  }
   if (event === 'delivered' && order.status !== 'Delivered') return json({ error: 'Order is not delivered' }, 409)
   if (order[claimColumn]) return json({ sent: 0, alreadySent: true })
 
-  const { data: claimedOrder, error: claimError } = await admin.from('orders')
-    .update({ [claimColumn]: new Date().toISOString() }).eq('id', order.id).eq(event === 'delivered' ? 'delivered_by' : 'created_by', actorId).is(claimColumn, null).select('id').maybeSingle()
+  let claim = admin.from('orders')
+    .update({ [claimColumn]: new Date().toISOString() }).eq('id', order.id).eq(actorColumn, actorId).is(claimColumn, null)
+  if (event === 'notes') claim = claim.eq('notes_revision', notesRevision)
+  const { data: claimedOrder, error: claimError } = await claim.select('id').maybeSingle()
   if (claimError) { console.error('Could not claim notification', claimError); return json({ error: 'Could not prepare notifications' }, 500) }
   if (!claimedOrder) return json({ sent: 0, alreadySent: true })
 
@@ -170,12 +181,18 @@ Deno.serve(async (request) => {
     return json({ error: 'Could not load notification devices' }, 500)
   }
 
-  const title = event === 'delivered' ? `${actorName} delivered an order` : `${actorName} added a new order`
-  const body = items.map((item) => {
+  const title = event === 'notes'
+    ? `${actorName} ${order.notes_change_kind === 'added' ? 'added' : order.notes_change_kind === 'removed' ? 'removed' : 'edited'} an order note`
+    : event === 'delivered' ? `${actorName} delivered an order` : `${actorName} added a new order`
+  const itemSummary = items.map((item) => {
     const quantity = Math.max(1, Number(item.quantity || 1))
     const price = quantity * Number(item.unitPrice || 0)
     return `${productNames.get(item.productId || '') || 'Product'} × ${quantity} · ${Math.round(price)} DH`
   }).join(' • ') || 'Order updated'
+  const notePreview = order.notes?.trim().slice(0, 180)
+  const body = event === 'notes'
+    ? `${order.client_name || 'Order'} · ${notePreview || 'Note removed'}`
+    : event === 'created' && notePreview ? `${itemSummary} • Note: ${notePreview}` : itemSummary
   const payload = JSON.stringify({ title, body, orderId: order.id, event })
 
   const webSubscriptions = (webResult.data ?? []) as PushSubscriptionRow[]

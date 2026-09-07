@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
   ArrowSquareOut,
   CalendarBlank,
@@ -26,7 +26,9 @@ import {
   X,
 } from '@phosphor-icons/react'
 import {
-  dateKey,
+  eventDateKey,
+  orderActivityDate,
+  longDate,
   money,
   navigationUrl,
   orderFilters,
@@ -73,6 +75,8 @@ export function DesktopSidebar({ tab, setTab, displayName, dark, toggleTheme }: 
 
 type DesktopOrdersViewProps = {
   orders: Order[]
+  carryoverOrders: Order[]
+  carryoverCount: number
   rangeOrders: Order[]
   highlightedOrderIds: string[]
   deliveredCount: number
@@ -93,17 +97,18 @@ type DesktopOrdersViewProps = {
   onDelete: (order: Order) => void
 }
 
-export function DesktopOrdersView({ orders, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, planRoute, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
+export function DesktopOrdersView({ orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, planRoute, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
-  const selected = orders.find((order) => order.id === selectedId) || orders[0] || null
-  const pendingCount = rangeOrders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length
+  const selectableOrders = [...carryoverOrders, ...orders]
+  const selected = selectableOrders.find((order) => order.id === selectedId) || selectableOrders[0] || null
+  const pendingCount = rangeOrders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length + carryoverCount
   const pageSize = 8
   const pageCount = Math.max(1, Math.ceil(orders.length / pageSize))
   const pagedOrders = orders.slice((page - 1) * pageSize, page * pageSize)
 
   useEffect(() => { if (selected && selected.id !== selectedId) setSelectedId(selected.id) }, [selected?.id, selectedId])
-  useEffect(() => { setPage(1) }, [query, statusFilter, rangeOrders.length])
+  useEffect(() => { setPage(1) }, [query, statusFilter, rangeLabelText, orders.length])
 
   return <section className="desktop-orders-view" aria-label="Orders desktop workspace">
     <header className="desktop-orders-header">
@@ -125,8 +130,9 @@ export function DesktopOrdersView({ orders, rangeOrders, highlightedOrderIds, de
         <div className="desktop-filter-row" aria-label="Filter orders by status">{orderFilters.map((filter) => <button key={filter.value} className={statusFilter === filter.value ? 'active' : ''} onClick={() => setStatusFilter(filter.value)}>{filter.label}</button>)}</div>
         <div className="desktop-table-head"><span>Customer</span><span>Products</span><span>Status</span><span>Payment</span><span>Assignee</span><span>Total</span><span>Actions</span></div>
         <div className="desktop-table-rows">
-          {pagedOrders.map((order) => <DesktopOrderRow key={order.id} order={order} selected={selected?.id === order.id} highlighted={highlightedOrderIds.includes(order.id)} products={products} members={members} onSelect={setSelectedId} onStatus={onStatus} onEdit={onEdit} onDelete={onDelete} />)}
-          {!orders.length && <DesktopEmptyState />}
+          {carryoverOrders.length > 0 && <><h2 className="desktop-day-heading">From Last Month <small>{carryoverOrders.length} open · Unfinished orders from previous months</small></h2>{carryoverOrders.map((order) => <DesktopOrderRow key={order.id} order={order} selected={selected?.id === order.id} highlighted={highlightedOrderIds.includes(order.id)} products={products} members={members} onSelect={setSelectedId} onStatus={onStatus} onEdit={onEdit} onDelete={onDelete} />)}</>}
+          {pagedOrders.map((order, index) => { const day = eventDateKey(orderActivityDate(order)); const showDate = index === 0 || eventDateKey(orderActivityDate(pagedOrders[index - 1])) !== day; return <Fragment key={order.id}>{showDate && <h2 className="desktop-day-heading">{statusFilter === 'Delivered' ? 'Delivered · ' : ''}{longDate(day)}</h2>}<DesktopOrderRow order={order} selected={selected?.id === order.id} highlighted={highlightedOrderIds.includes(order.id)} products={products} members={members} onSelect={setSelectedId} onStatus={onStatus} onEdit={onEdit} onDelete={onDelete} /></Fragment> })}
+          {!orders.length && !carryoverOrders.length && <DesktopEmptyState />}
         </div>
         {orders.length > 0 && <footer className="desktop-pagination"><span>Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, orders.length)} of {orders.length} orders</span><div><button aria-label="Previous page" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><CaretLeft /></button><b>{page}</b><span>of {pageCount}</span><button aria-label="Next page" disabled={page === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}><CaretRight /></button></div></footer>}
       </section>
@@ -158,7 +164,7 @@ function DesktopOrderRow({ order, selected, highlighted, products, members, onSe
   return <article className={`desktop-order-row ${selected ? 'selected' : ''} ${highlighted ? 'push-highlight' : ''}`} onClick={() => onSelect(order.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(order.id) }} tabIndex={0}>
     <div className="desktop-customer"><span className="desktop-customer-avatar">{order.client.slice(0, 1).toUpperCase()}</span><div><b>{order.client}</b><span>{order.phone}</span><small>{order.address}</small></div></div>
     <span className="desktop-product-copy" title={productLines}><b>{productLines}</b><small>SKU: {productCodes}</small></span>
-    <StatusSelector order={order} onStatus={onStatus} stopPropagation />
+    <div><StatusSelector order={order} onStatus={onStatus} stopPropagation /><small className="desktop-event-date">{order.status === 'Delivered' ? order.deliveredAt ? `Delivered ${shortDate(eventDateKey(order.deliveredAt))}` : 'Delivery date unavailable' : `Created ${shortDate(eventDateKey(order.createdAt))}`}</small></div>
     <span className={`desktop-payment payment-${order.paymentStatus.toLowerCase().replaceAll(' ', '-')}`}>{order.paymentStatus}</span>
     <span className="desktop-assignee"><i>{assignee.slice(0, 1).toUpperCase()}</i>{assignee}</span>
     <strong className="desktop-total">{money(total)}</strong>
@@ -180,7 +186,7 @@ function DesktopOrderDetail({ order, products, members, confirmationEmployees, o
     <section className="desktop-detail-customer"><span>Customer</span><h2>{order.client}</h2><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}<ArrowSquareOut /></a></section>
     <section className="desktop-detail-block"><span>Delivery address</span><p>{order.address}</p>{order.locationUrl?.trim() && <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><MapPin />Open in maps<ArrowSquareOut /></a>}</section>
     <section className="desktop-detail-block"><span>Products</span>{order.items.map((item) => <div className="desktop-detail-line" key={`${order.id}-${item.productId}`}><p>{products.find((product) => product.id === item.productId)?.name ?? 'Product'} <small>×{item.quantity}</small></p><b>{money(item.quantity * item.unitPrice)}</b></div>)}<div className="desktop-detail-line detail-total"><p>Total</p><b>{money(total)}</b></div></section>
-    <section className="desktop-detail-grid"><div><span>Payment</span><b>{order.paymentStatus}</b></div><div><span>Assignee</span><b>{assignee}</b></div><div><span>Confirmed by</span><b>{confirmer}</b></div><div><span>Created</span><b>{shortDate(dateKey(order.createdAt))}</b></div></section>
+    <section className="desktop-detail-grid"><div><span>Payment</span><b>{order.paymentStatus}</b></div><div><span>Assignee</span><b>{assignee}</b></div><div><span>Confirmed by</span><b>{confirmer}</b></div><div><span>Created</span><b>{shortDate(eventDateKey(order.createdAt))}</b></div>{order.status === 'Delivered' && <div><span>Delivered</span><b>{order.deliveredAt ? shortDate(eventDateKey(order.deliveredAt)) : 'Date unavailable'}</b></div>}</section>
     {order.notes?.trim() && <section className="desktop-detail-note"><NoteBlank /><div><span>Note</span><p>{order.notes}</p></div></section>}
     <footer><button className="desktop-edit-order" onClick={() => onEdit(order)}><PencilSimple />Edit order</button><button className="desktop-delete-order" disabled={deleteDisabled} title={deleteLabel} onClick={() => onDelete(order)}><Trash />{deleteDisabled ? 'Delivered · cannot delete' : 'Delete order'}</button>{deleteDisabled && <small>Stock has already left inventory and cannot be restored.</small>}</footer>
   </div>

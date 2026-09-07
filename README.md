@@ -30,3 +30,7 @@ Native notifications require one-time Firebase setup:
 5. Re-run `npm run android:sync`, build the APK, install it, and enable notifications in the app's Settings screen.
 
 Browser notifications continue to use Web Push. Android devices are stored separately in the RLS-protected `android_push_devices` table, and the `notify-new-order` function sends to both channels.
+
+Order note changes notify other workspace members with notifications enabled. Alerts include the editor, customer name, and a short note preview; tapping opens the order. Initial notes appear in the new-order alert. Adding, editing, or clearing a note on an existing order sends a separate alert, while unchanged saves do not. Each saved note revision can be claimed only once.
+
+To release note notifications, apply `supabase/migrations/20260905100316_add_order_note_notifications.sql`, deploy the updated `notify-new-order` Edge Function, then release the web app (and rebuild Android for native users). Validate the handler with `node --test scripts/order-note-notifications.test.mjs`.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowsClockwise,
@@ -36,8 +36,8 @@ import {
   WarningCircle,
   X,
 } from '@phosphor-icons/react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import '@fontsource/dm-mono/400.css'
+import '@fontsource/dm-mono/500.css'
 import '@fontsource/fraunces/600.css'
 import '@fontsource/fraunces/700.css'
 import '@fontsource/manrope/400.css'
@@ -48,9 +48,16 @@ import { EmptyState, FeatureBoundary, Metric, Modal, NavButton, PageHeader } fro
 import { initialOrders, initialProducts } from './data'
 import { DesktopOrdersView, DesktopSidebar } from './features/orders/DesktopOrders'
 import { OrderCard, OrderForm } from './features/orders/OrderComponents'
+import { distanceKm, mapCoordinates, resolveLocation, type Coordinates } from './domain/locations'
 import {
   bundleStock,
   confirmationBonusFor,
+  carriedOrders,
+  eventDateKey,
+  inDateRange,
+  orderActivityDate,
+  ordersForRange,
+  previousMonthRange,
   dateKey,
   dateStamp,
   isConfirmedOrder,
@@ -78,12 +85,10 @@ import {
 import { supabase } from './supabase'
 import {
   authRedirectUrl,
-  cloudflareApiUrl,
   getCurrentDevicePosition,
   isLocationPermissionDenied,
   listenForNativeAuthLinks,
   listenForNativeBackButton,
-  type DevicePosition,
 } from './nativePlatform'
 import {
   consumePendingPushOrderIds,
@@ -100,6 +105,8 @@ type WorkspaceStatus = 'checking' | 'ready' | 'missing' | 'error'
 type ResourceName = 'workspace' | 'orders' | 'products' | 'members' | 'employees' | 'inventory'
 type ResourcePhase = 'idle' | 'loading' | 'ready' | 'error'
 type PendingOrder = { workspaceId: string; order: Order; status: 'saving' | 'failed'; lastError?: string }
+
+const DeliveryMap = lazy(() => import('./features/map/DeliveryMap'))
 
 const emptyResourcePhases: Record<ResourceName, ResourcePhase> = {
   workspace: 'idle', orders: 'idle', products: 'idle', members: 'idle', employees: 'idle', inventory: 'idle',
@@ -229,6 +236,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
   const [profitStart, setProfitStart] = useState(monthStartKey)
   const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
+  const [employeePeriod, setEmployeePeriod] = useState<'month' | 'last' | 'all'>('month')
   const [pushState, setPushState] = useState<PushNotificationState>('prompt')
   const [pushBusy, setPushBusy] = useState(false)
   const [pushMessage, setPushMessage] = useState('Get an alert when another admin adds or delivers an order.')
@@ -500,36 +508,41 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     : 0
   const delivered = orders.filter((order) => order.status === 'Delivered')
   const profitOrders = delivered.filter((order) => {
-    const orderDate = dateKey(order.deliveredAt || order.createdAt)
+    const orderDate = eventDateKey(orderActivityDate(order))
     return (!profitStart || orderDate >= profitStart) && (!profitEnd || orderDate <= profitEnd)
-  })
+  }).sort((a, b) => new Date(orderActivityDate(b)).getTime() - new Date(orderActivityDate(a)).getTime())
   const profitTotals = useMemo(() => profitOrders.reduce((sum, order) => {
     const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
     const costs = order.items.reduce((value, item) => value + itemCost(item, products), 0) + order.deliveryCharge + order.otherExpense
     const confirmationBonus = confirmationCost(order)
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs - confirmationBonus, confirmationBonuses: sum.confirmationBonuses + confirmationBonus }
   }, { revenue: 0, profit: 0, confirmationBonuses: 0 }), [profitOrders, products, confirmationEmployees])
-  const selectedRangeOrders = orders.filter((order) => { const created = dateKey(order.createdAt); return created >= orderRange.start && created <= orderRange.end })
-  const selectedRangeDelivered = orders.filter((order) => { const deliveredAt = dateKey(order.deliveredAt || order.createdAt); return order.status === 'Delivered' && deliveredAt >= orderRange.start && deliveredAt <= orderRange.end })
+  const selectedRangeOrders = ordersForRange(orders, orderRange)
+  const selectedRangeDelivered = selectedRangeOrders.filter((order) => order.status === 'Delivered')
+  const carryoverOrders = carriedOrders(orders, orderRange)
+  const employeeRange = employeePeriod === 'last' ? previousMonthRange() : { start: monthStartKey(), end: monthEndKey() }
+  const employeePeriodLabel = employeePeriod === 'all' ? 'All time' : monthLabel(employeeRange.start)
+  const periodConfirmations = orders.filter((order) => order.confirmedAt && (employeePeriod === 'all' || inDateRange(eventDateKey(order.confirmedAt), employeeRange)))
   const selectedRangeProfit = selectedRangeDelivered.reduce((sum, order) => {
     const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
     const costs = order.items.reduce((value, item) => value + itemCost(item, products), 0) + order.deliveryCharge + order.otherExpense + confirmationCost(order)
     return sum + revenue - costs
   }, 0)
   const employeeSummaries = confirmationEmployees.map((employee) => {
-    const confirmations = orders.filter((order) => order.confirmationEmployeeId === employee.id && order.confirmedAt)
+    const confirmations = periodConfirmations.filter((order) => order.confirmationEmployeeId === employee.id)
     const productNames = [...new Set(confirmations.flatMap((order) => order.items.map((item) => products.find((product) => product.id === item.productId)?.name).filter((name): name is string => Boolean(name))))]
     const itemCount = confirmations.reduce((sum, order) => sum + order.items.reduce((quantity, item) => quantity + item.quantity, 0), 0)
     return { employee, count: confirmations.length, itemCount, bonus: confirmations.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(employee, order.items)), 0), productNames }
   }).filter(({ employee, count }) => employee.active || count > 0)
   const selectedEmployee = confirmationEmployees.find((employee) => employee.id === selectedEmployeeId)
-  const selectedEmployeeOrders = selectedEmployee ? orders.filter((order) => order.confirmationEmployeeId === selectedEmployee.id && order.confirmedAt).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
+  const selectedEmployeeOrders = selectedEmployee ? periodConfirmations.filter((order) => order.confirmationEmployeeId === selectedEmployee.id).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
 
-  const visibleOrders = selectedRangeOrders
-    .filter((order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter))
-    .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+  const matchesOrderFilter = (order: Order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter)
+  const visibleCarryover = carryoverOrders.filter(matchesOrderFilter).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  const visibleOrders = selectedRangeOrders.filter(matchesOrderFilter)
+    .sort((first, second) => new Date(orderActivityDate(second)).getTime() - new Date(orderActivityDate(first)).getTime())
   const orderGroups = visibleOrders.reduce<{ date: string; orders: Order[] }[]>((groups, order) => {
-    const day = dateKey(order.createdAt); const latest = groups[groups.length - 1]
+    const day = eventDateKey(orderActivityDate(order)); const latest = groups[groups.length - 1]
     if (latest?.date === day) latest.orders.push(order); else groups.push({ date: day, orders: [order] })
     return groups
   }, [])
@@ -668,16 +681,22 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         : confirmationBonusFor(confirmationEmployee, updatedItems)
       : 0
     const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: updatedItems, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
-    setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
     if (supabase && workspaceId) {
-      const { error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id)
+      const { data: savedOrder, error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id).select('id, notes_revision').single()
       if (error) { setNotice(error.message); return }
+      setNotice('Order changes saved.')
+      if ((updated.notes ?? '') !== (editingOrder.notes ?? '') && savedOrder.notes_revision) {
+        const { data: notification, error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: updated.id, event: 'notes', notesRevision: savedOrder.notes_revision } })
+        if (notificationError || notification?.failed) setNotice('Note saved, but some phone notifications could not be sent.')
+      }
       if (becameDelivered) {
         const { error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: updated.id, event: 'delivered' } })
         if (notificationError) setNotice('Order delivered, but phone notifications could not be sent.')
       }
     }
+    setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
     setEditingOrder(null)
+    if (!supabase || !workspaceId) setNotice('Order changes saved.')
   }
 
   async function addBundle(form: HTMLFormElement) {
@@ -849,13 +868,15 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
       <div className="filter-rail" aria-label="Filter orders by status">{orderFilters.map((filter) => {
-        const count = filter.value === 'All' ? selectedRangeOrders.length : selectedRangeOrders.filter((order) => order.status === filter.value).length
+        const count = [...selectedRangeOrders, ...carryoverOrders].filter((order) => filter.value === 'All' || order.status === filter.value).length
         return <button key={filter.value} className={statusFilter === filter.value ? 'selected' : ''} onClick={() => setStatusFilter(filter.value)}><span>{filter.label}</span><small>{count}</small></button>
       })}</div>
-      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{group.date === dateKey(new Date()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && resourcePhases.orders === 'loading' ? <DataLoading label="Loading orders" /> : !visibleOrders.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
+      {visibleCarryover.length > 0 && <section className="ledger-section carryover-section"><div className="order-day-group"><h2><span>From Last Month</span><small>{visibleCarryover.length} open</small></h2><p className="period-caption">Unfinished orders from previous months</p><div className="order-ledger">{visibleCarryover.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div></section>}
+      <p className="period-caption">{statusFilter === 'Delivered' ? 'Grouped by delivery date' : 'Delivered orders use delivery date; other orders use creation date.'}</p>
+      <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{statusFilter === 'Delivered' ? 'Delivered · ' : ''}{group.date === eventDateKey(new Date().toISOString()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && resourcePhases.orders === 'loading' ? <DataLoading label="Loading orders" /> : !visibleOrders.length && !visibleCarryover.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
-    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
+    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
@@ -867,20 +888,21 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'profit' && <section className="page">
       <PageHeader title="Profit" subtitle="Delivered orders only" />
       <section className="range-control" aria-label="Choose profit date range"><label><span>From</span><div><CalendarBlank /><input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></div></label><i /><label><span>To</span><div><CalendarBlank /><input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></div></label></section>
-      <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button></div>
+      <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button className={profitStart === monthStartKey() && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button><button className={profitStart === previousMonthRange().start && profitEnd === previousMonthRange().end ? 'selected' : ''} onClick={() => { const range = previousMonthRange(); setProfitStart(range.start); setProfitEnd(range.end) }}>Last month</button></div>
+      <p className="period-caption">{profitStart && profitEnd ? rangeLabel({ start: profitStart, end: profitEnd }) : 'Selected dates'} · By delivery date</p>
       <section className="net-profit"><span>Net profit</span><strong>{money(profitTotals.profit)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
       <section className="profit-grid"><Metric icon={<Tag />} label="Sales" value={money(profitTotals.revenue)} /><Metric icon={<ClipboardText />} label="Orders" value={String(profitOrders.length)} /><Metric icon={<UsersThree />} label="Team bonuses" value={money(profitTotals.confirmationBonuses)} /><Metric icon={<ChartBar />} label="Average net" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></section>
-      <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{dateStamp(dateKey(order.deliveredAt || order.createdAt))}</p><span>{order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
+      <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{order.deliveredAt ? `Delivered ${dateStamp(eventDateKey(order.deliveredAt))}` : "Delivery date unavailable"} · Created {dateStamp(eventDateKey(order.createdAt))}</p><span>{order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
     </section>}
 
 
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
         <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => setEditingConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button></>} />
-        <div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in total</small></section><h3>Confirmation history</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(dateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations yet" copy="Assign this employee when confirming an order." />}</div>
+        <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in this period</small></section><h3>Confirmation history · {employeePeriodLabel}</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(eventDateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations in this period" copy="Choose another period to see earlier work." />}</div>
       </> : <>
         <PageHeader title="Employees" subtitle="Confirmation work and bonuses" actions={<button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add employee</button>} />
-        <p className="page-intro">Tap an employee to view confirmation history.</p>
+        <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><p className="page-intro">Tap an employee to view confirmation history.</p>
         <div className="employee-ledger">{employeeSummaries.map(({ employee, count, itemCount, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{employee.bonusBasis === 'per_item' ? `${itemCount} confirmed ${itemCount === 1 ? 'item' : 'items'}` : `${count} confirmed ${count === 1 ? 'order' : 'orders'}`}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Use Add employee above to create the first one." />}</div>
       </>}
     </section>}
@@ -894,7 +916,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     </div></div></FeatureBoundary>}
 
-    {tab === 'map' && <FeatureBoundary resetKey={tab}><section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section></FeatureBoundary>}
+    {tab === 'map' && <FeatureBoundary resetKey={tab}><Suspense fallback={<section className="map-screen"><DataLoading label="Loading map" /></section>}><section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section></Suspense></FeatureBoundary>}
 
     <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders' || tab === 'settings'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
     {tab === 'orders' && <button className="ledger-fab mobile-only-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
@@ -973,6 +995,7 @@ function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onCha
   return <div className="range-calendar-scrim" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) close() }}>
     <section className="range-calendar" role="dialog" aria-modal="true" aria-label="Choose order date range">
       <header><div><span>Order range</span><strong>{rangeLabel(value)}</strong></div><button type="button" onClick={close} aria-label="Close calendar"><X /></button></header>
+      <div className="quick-range"><button type="button" onClick={resetToMonth}>This month</button><button type="button" onClick={() => { const range = previousMonthRange(); onChange(range); setVisibleMonth(new Date(`${range.start}T12:00:00`)); setSelectionAnchor(null) }}>Last month</button></div>
       <div className="calendar-month-nav"><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} aria-label="Previous month"><CaretLeft /></button><h2>{monthLabel(dateKey(visibleMonth))}</h2><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} aria-label="Next month"><CaretRight /></button></div>
       <p className="calendar-hint">Press and swipe across dates, or tap a start and end date.</p>
       <div className="calendar-weekdays" aria-hidden="true">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}</div>
@@ -984,50 +1007,6 @@ function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onCha
     </section>
   </div>
 }
-type Coordinates = { latitude: number; longitude: number }
-type CurrentLocation = Coordinates & { accuracy: number }
-function mapCoordinates(locationUrl?: string): Coordinates | null {
-  if (!locationUrl) return null
-  const source = decodeURIComponent(locationUrl)
-  const patterns: { expression: RegExp; reverse?: boolean }[] = [
-    { expression: /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
-    { expression: /[?&](?:q|query|ll|destination|origin)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
-    { expression: /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/ },
-    { expression: /!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/, reverse: true },
-    { expression: /\/place\/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
-    { expression: /geo:(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/ },
-  ]
-  for (const { expression, reverse } of patterns) {
-    const match = source.match(expression)
-    if (!match) continue
-    const [latitude, longitude] = reverse ? [Number(match[2]), Number(match[1])] : [Number(match[1]), Number(match[2])]
-    if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) return { latitude, longitude }
-  }
-  return null
-}
-type LocationResolution = { locationUrl?: string; coordinates?: Coordinates }
-function locationCacheKey(locationUrl: string) { return `tanger-location:v2:${locationUrl}` }
-async function resolveLocation(locationUrl?: string): Promise<LocationResolution> {
-  const directCoordinates = mapCoordinates(locationUrl)
-  if (!locationUrl || directCoordinates) return { locationUrl, coordinates: directCoordinates ?? undefined }
-  try {
-    const cached = localStorage.getItem(locationCacheKey(locationUrl))
-    if (cached) {
-      const result = JSON.parse(cached) as LocationResolution
-      if (result.coordinates) return result
-    }
-  } catch { /* A blocked storage area should not prevent location lookup. */ }
-  try {
-    const response = await fetch(cloudflareApiUrl('/api/resolve-location'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationUrl }) })
-    if (!response.ok) return { locationUrl }
-    const data = await response.json() as LocationResolution
-    const result = { locationUrl: data.locationUrl || locationUrl, coordinates: data.coordinates || mapCoordinates(data.locationUrl) || undefined }
-    if (result.coordinates) localStorage.setItem(locationCacheKey(locationUrl), JSON.stringify(result))
-    return result
-  } catch { return { locationUrl } }
-}
-function distanceKm(first: Coordinates, second: Coordinates) { const radians = (value: number) => value * Math.PI / 180; const deltaLatitude = radians(second.latitude - first.latitude); const deltaLongitude = radians(second.longitude - first.longitude); const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(first.latitude)) * Math.cos(radians(second.latitude)) * Math.sin(deltaLongitude / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) }
-
 function PasswordRecoveryScreen({ onComplete }: { onComplete: () => void }) {
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1109,68 +1088,4 @@ function AppBootScreen({ error, retry }: { error?: string; retry?: () => void })
 
 function DataLoading({ label }: { label: string }) {
   return <div className="data-loading" role="status"><span /><span /><span /><p>{label}…</p></div>
-}
-
-function DeliveryMap({ orders }: { orders: Order[] }) {
-  const element = useRef<HTMLDivElement>(null);
-  const map = useRef<L.Map | null>(null);
-  const fallbackLocation: Coordinates = { latitude: 35.7410429, longitude: -5.803754 };
-  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
-  const [locationStatus, setLocationStatus] = useState<'locating' | 'available' | 'denied' | 'unavailable'>('locating');
-  const [resolvedOrders, setResolvedOrders] = useState<{ order: Order; coordinates: Coordinates }[]>([]);
-
-  const acceptLocation = ({ coords }: DevicePosition) => {
-    const location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy };
-    setCurrentLocation(location); setLocationStatus('available');
-  };
-  const rejectLocation = (error: unknown) => setLocationStatus(isLocationPermissionDenied(error) ? 'denied' : 'unavailable');
-  const requestCurrentLocation = () => {
-    setLocationStatus('locating');
-    void getCurrentDevicePosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 }).then(acceptLocation).catch(rejectLocation);
-  };
-
-  useEffect(() => {
-    void getCurrentDevicePosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 }).then(acceptLocation).catch(rejectLocation);
-  }, []);
-
-  useEffect(() => {
-    void Promise.all(orders.map(async (order): Promise<{ order: Order; coordinates: Coordinates } | null> => {
-      const location = await resolveLocation(order.locationUrl);
-      const coordinates = location.coordinates || mapCoordinates(location.locationUrl);
-      return coordinates ? { order, coordinates } : null;
-    })).then((locations) => setResolvedOrders(locations.filter((location): location is { order: Order; coordinates: Coordinates } => location !== null)));
-  }, [orders]);
-
-  useEffect(() => {
-    if (!element.current) return;
-    const locationAnchor = currentLocation ?? fallbackLocation;
-    const points = [...resolvedOrders].sort((a, b) => distanceKm(locationAnchor, a.coordinates) - distanceKm(locationAnchor, b.coordinates));
-
-    map.current?.remove();
-    map.current = L.map(element.current, { zoomControl: false }).setView([locationAnchor.latitude, locationAnchor.longitude], 12);
-    L.control.zoom({ position: 'bottomright' }).addTo(map.current);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map.current);
-    const layer = L.layerGroup().addTo(map.current);
-    const markerIcon = new L.Icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png', shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] });
-    if (currentLocation) {
-      const currentIcon = L.divIcon({ className: 'current-location-marker', html: '<span><i></i></span>', iconSize: [30, 30], iconAnchor: [15, 15] });
-      L.circle([currentLocation.latitude, currentLocation.longitude], { radius: Math.min(Math.max(currentLocation.accuracy, 20), 500), color: '#1679e8', weight: 1, fillColor: '#56a7ff', fillOpacity: .12, interactive: false }).addTo(layer);
-      L.marker([currentLocation.latitude, currentLocation.longitude], { icon: currentIcon, zIndexOffset: 2000 }).bindPopup('<strong>Your current location</strong>').addTo(layer);
-    }
-
-    points.forEach(({ order, coordinates }, index) => {
-      L.marker([coordinates.latitude, coordinates.longitude], { icon: markerIcon, zIndexOffset: 1000 })
-        .bindPopup(`<strong>${index + 1}. ${order.client}</strong><br>${order.address}<br><a href="${navigationUrl(order)}" target="_blank">Open in Google Maps</a>`)
-        .addTo(layer);
-    });
-
-    const bounds: [number, number][] = [...(currentLocation ? [[currentLocation.latitude, currentLocation.longitude] as [number, number]] : []), ...points.map(({ coordinates }): [number, number] => [coordinates.latitude, coordinates.longitude])];
-    if (bounds.length > 1) map.current.fitBounds(L.latLngBounds(bounds), { padding: [34, 34], maxZoom: 14, animate: false });
-    else if (bounds.length === 1) map.current.setView(bounds[0], 15, { animate: false });
-    const invalidateTimer = window.setTimeout(() => map.current?.invalidateSize({ animate: false }), 100);
-    return () => { window.clearTimeout(invalidateTimer); const currentMap = map.current; map.current = null; currentMap?.stop(); currentMap?.remove(); };
-  }, [resolvedOrders, currentLocation]);
-
-  const locationLabel = locationStatus === 'available' ? 'My location' : locationStatus === 'locating' ? 'Locating…' : locationStatus === 'denied' ? 'Allow location' : 'Locate me';
-  return <><div ref={element} className="map-canvas" /><button type="button" className={`map-location ${locationStatus === 'locating' ? 'is-locating' : ''}`} aria-label={currentLocation ? 'Center map on my location' : 'Show my current location'} onClick={() => currentLocation ? map.current?.flyTo([currentLocation.latitude, currentLocation.longitude], 15, { animate: true, duration: .7 }) : requestCurrentLocation()}><NavigationArrow weight={currentLocation ? 'fill' : 'regular'} /><span>{locationLabel}</span></button>{!resolvedOrders.length && <p className="map-empty">Add Google Maps location links to orders to see them here.</p>}</>;
 }

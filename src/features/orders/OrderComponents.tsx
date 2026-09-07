@@ -13,8 +13,9 @@ import {
   UserCheck,
   X,
 } from '@phosphor-icons/react'
+import { useState } from 'react'
 import { people } from '../../data'
-import { money, navigationUrl, paymentStatuses, statuses, type ConfirmationEmployee } from '../../domain/orders'
+import { eventDateKey, shortDate, money, navigationUrl, paymentStatuses, statuses, type ConfirmationEmployee } from '../../domain/orders'
 import type { Order, Product, Status } from '../../types'
 
 type Member = { id: string; display_name: string | null }
@@ -29,11 +30,12 @@ type OrderFormProps = {
 }
 
 export function OrderForm({ order, products, members, confirmationEmployees, onSubmit, submitLabel = 'Save order' }: OrderFormProps) {
+  const [submitting, setSubmitting] = useState(false)
   const assignees = members.length
     ? members.map((member) => ({ value: member.id, label: member.display_name || 'Team member' }))
     : people.map((person) => ({ value: person, label: person }))
 
-  return <form onSubmit={(event) => { event.preventDefault(); void onSubmit(event.currentTarget) }} className="form">
+  return <form onSubmit={(event) => { event.preventDefault(); if (submitting) return; setSubmitting(true); void onSubmit(event.currentTarget).finally(() => setSubmitting(false)) }} className="form">
     <label className="form-field"><span>Customer name</span><input required name="client" defaultValue={order?.client} /></label>
     <label className="form-field"><span>WhatsApp number</span><input required name="phone" defaultValue={order?.phone} /></label>
     <label className="form-field"><span>Address <small>Arabic or English</small></span><input required name="address" defaultValue={order?.address} /></label>
@@ -45,7 +47,7 @@ export function OrderForm({ order, products, members, confirmationEmployees, onS
     <label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per {employee.bonusBasis === 'per_item' ? 'item' : 'order'}</option>)}</select></label>
     <label className="form-field"><span>Other expense <small>Optional</small></span><input name="otherExpense" type="number" defaultValue={order?.otherExpense} /></label>
     <label className="form-field"><span>Note</span><textarea name="notes" defaultValue={order?.notes} /></label>
-    <button className="primary full">{submitLabel}</button>
+    <button className="primary full" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
   </form>
 }
 
@@ -77,6 +79,7 @@ export function OrderCard({ order, highlighted = false, products, members, confi
       <p className="product-line">{lines}</p>
       {order.notes?.trim() && <p className="note-line"><NoteBlank /><span><b>Note:</b> {order.notes}</span></p>}
       <div className="order-meta"><span><Tag />{money(total)}</span><span><User />{assignee}</span>{confirmer && <span><UserCheck />Confirmed by {confirmer.name}</span>}</div>
+      <div className="order-date-meta"><span>Created {shortDate(eventDateKey(order.createdAt))}</span>{order.status === 'Delivered' && <span>{order.deliveredAt ? `Delivered ${shortDate(eventDateKey(order.deliveredAt))}` : 'Delivery date unavailable'}</span>}</div>
     </div>
   </article>
 }
