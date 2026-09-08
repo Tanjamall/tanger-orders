@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { ArrowLeft, ChartBar, ClipboardText, Cube, MapPin, Moon, Sun, UsersThree, Warning as WarningTriangle, X } from '@phosphor-icons/react'
+import { ArrowLeft, ChartBar, ChartLineUp, ClipboardText, Cube, Moon, Sun, Warning as WarningTriangle, X } from '@phosphor-icons/react'
 
 export function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }: { title: string; subtitle: string; dark?: boolean; toggleTheme?: () => void; actions?: ReactNode; back?: () => void }) {
   return <header className="ledger-header">
@@ -8,8 +8,8 @@ export function PageHeader({ title, subtitle, dark, toggleTheme, actions, back }
   </header>
 }
 
-export function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'employees' | 'map'; label: string; active: boolean; onClick: () => void }) {
-  const icons = { orders: <ClipboardText />, inventory: <Cube />, profit: <ChartBar />, employees: <UsersThree />, map: <MapPin /> }
+export function NavButton({ icon, label, active, onClick }: { icon: 'orders' | 'inventory' | 'profit' | 'analysis'; label: string; active: boolean; onClick: () => void }) {
+  const icons = { orders: <ClipboardText />, inventory: <Cube />, profit: <ChartBar />, analysis: <ChartLineUp /> }
   return <button className={active ? 'active' : ''} onClick={onClick}>{icons[icon]}<span>{label}</span></button>
 }
 

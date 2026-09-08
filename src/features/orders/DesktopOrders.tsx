@@ -9,20 +9,16 @@ import {
   CheckCircle,
   ClipboardText,
   Cube,
-  GearSix,
   MagnifyingGlass,
   MapPin,
-  Moon,
   NoteBlank,
   Pause,
   PencilSimple,
   Plus,
-  SlidersHorizontal,
-  Sun,
   Tag,
   Trash,
+  TrendUp,
   Truck,
-  UsersThree,
   X,
 } from '@phosphor-icons/react'
 import {
@@ -45,20 +41,16 @@ type DesktopSidebarProps = {
   tab: AppTab
   setTab: (tab: AppTab) => void
   displayName: string
-  dark: boolean
-  toggleTheme: () => void
 }
 
 const sidebarItems: { value: AppTab; label: string; icon: ReactNode }[] = [
   { value: 'orders', label: 'Orders', icon: <ClipboardText /> },
   { value: 'inventory', label: 'Inventory', icon: <Cube /> },
   { value: 'profit', label: 'Profit', icon: <ChartBar /> },
-  { value: 'employees', label: 'Employees', icon: <UsersThree /> },
-  { value: 'map', label: 'Map', icon: <MapPin /> },
-  { value: 'settings', label: 'Settings', icon: <GearSix /> },
+  { value: 'analysis', label: 'Analysis', icon: <TrendUp /> },
 ]
 
-export function DesktopSidebar({ tab, setTab, displayName, dark, toggleTheme }: DesktopSidebarProps) {
+export function DesktopSidebar({ tab, setTab, displayName }: DesktopSidebarProps) {
   return <aside className="desktop-sidebar" aria-label="Main navigation">
     <header>
       <span className="desktop-brand-mark" aria-hidden="true"><img src="/icon-192.png" alt="" /></span>
@@ -68,7 +60,6 @@ export function DesktopSidebar({ tab, setTab, displayName, dark, toggleTheme }: 
     <div className="desktop-sidebar-account">
       <span className="desktop-avatar">{displayName.slice(0, 1).toUpperCase()}</span>
       <div><b>{displayName}</b><small>Manager · Tanger</small></div>
-      <button aria-label={dark ? 'Use light mode' : 'Use dark mode'} onClick={toggleTheme}>{dark ? <Sun /> : <Moon />}</button>
     </div>
   </aside>
 }
@@ -91,13 +82,13 @@ type DesktopOrdersViewProps = {
   setStatusFilter: (value: Status | 'All') => void
   openCalendar: () => void
   newOrder: () => void
-  planRoute: () => void
+  menu: ReactNode
   onStatus: (id: string, status: Status) => void
   onEdit: (order: Order) => void
   onDelete: (order: Order) => void
 }
 
-export function DesktopOrdersView({ orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, planRoute, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
+export function DesktopOrdersView({ orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, menu, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const selectableOrders = [...carryoverOrders, ...orders]
@@ -115,7 +106,7 @@ export function DesktopOrdersView({ orders, carryoverOrders, carryoverCount, ran
       <div><h1>Orders</h1><button type="button" onClick={openCalendar}><CalendarBlank />{rangeLabelText}<CaretDown /></button></div>
       <label className="desktop-search"><MagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search orders, customers, products…" />{query && <button type="button" aria-label="Clear search" onClick={() => setQuery('')}><X /></button>}</label>
       <button className="desktop-new-order" onClick={newOrder}><Plus />New order</button>
-      <button className="desktop-icon-button" aria-label="Plan delivery route" title="Plan delivery route" onClick={planRoute}><SlidersHorizontal /></button>
+      {menu}
     </header>
 
     <section className="desktop-summary" aria-label="Order summary">

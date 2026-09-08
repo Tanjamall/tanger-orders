@@ -25,11 +25,12 @@ type OrderFormProps = {
   products: Product[]
   members: Member[]
   confirmationEmployees: ConfirmationEmployee[]
+  defaultDeliveryCharge?: number
   onSubmit: (form: HTMLFormElement) => Promise<void>
   submitLabel?: string
 }
 
-export function OrderForm({ order, products, members, confirmationEmployees, onSubmit, submitLabel = 'Save order' }: OrderFormProps) {
+export function OrderForm({ order, products, members, confirmationEmployees, defaultDeliveryCharge = 0, onSubmit, submitLabel = 'Save order' }: OrderFormProps) {
   const [submitting, setSubmitting] = useState(false)
   const assignees = members.length
     ? members.map((member) => ({ value: member.id, label: member.display_name || 'Team member' }))
@@ -42,7 +43,7 @@ export function OrderForm({ order, products, members, confirmationEmployees, onS
     <label className="form-field"><span>Google Maps link <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label>
     <label className="form-field"><span>Product or bundle</span><select name="product" defaultValue={order?.items[0]?.productId}>{products.map((product) => <option value={product.id} key={product.id}>{product.components ? 'Bundle: ' : ''}{product.name} — {money(product.price)}</option>)}</select></label>
     <div className="form-row"><label className="form-field"><span>Quantity</span><input name="quantity" type="number" min="1" defaultValue={order?.items[0]?.quantity || 1} /></label><label className="form-field"><span>Custom price <small>Optional</small></span><input name="price" type="number" defaultValue={order?.items[0]?.unitPrice} /></label></div>
-    <div className="form-row"><label className="form-field"><span>Delivery person</span><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select></label><label className="form-field"><span>Delivery expense</span><input name="deliveryCharge" type="number" defaultValue={order?.deliveryCharge} /></label></div>
+    <div className="form-row"><label className="form-field"><span>Delivery person</span><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select></label><label className="form-field"><span>Delivery expense</span><input name="deliveryCharge" type="number" min="0" step="0.01" defaultValue={order?.deliveryCharge ?? defaultDeliveryCharge} /></label></div>
     <div className="form-row"><label className="form-field"><span>Order status</span><select name="status" defaultValue={order?.status || 'New'}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="form-field"><span>Payment status</span><select name="paymentStatus" defaultValue={order?.paymentStatus || 'Pay on delivery'}>{paymentStatuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
     <label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per {employee.bonusBasis === 'per_item' ? 'item' : 'order'}</option>)}</select></label>
     <label className="form-field"><span>Other expense <small>Optional</small></span><input name="otherExpense" type="number" defaultValue={order?.otherExpense} /></label>

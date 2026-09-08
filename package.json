@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test:domain": "node --test scripts/order-periods.test.mjs scripts/analytics.test.mjs",
     "check": "tsc -p tsconfig.app.json --noUnusedLocals --noUnusedParameters --pretty false",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

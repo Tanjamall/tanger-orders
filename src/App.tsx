@@ -14,13 +14,11 @@ import {
   ClipboardText,
   Copy,
   Cube,
-  GearSix,
   LockKey,
   MagnifyingGlass,
   NavigationArrow,
   NoteBlank,
   Package,
-  Path,
   Pause,
   PencilSimple,
   Play,
@@ -45,8 +43,10 @@ import '@fontsource/manrope/500.css'
 import '@fontsource/manrope/600.css'
 import '@fontsource/manrope/700.css'
 import { EmptyState, FeatureBoundary, Metric, Modal, NavButton, PageHeader } from './components/ui'
+import { AppMenu } from './components/AppMenu'
 import { initialOrders, initialProducts } from './data'
 import { DesktopOrdersView, DesktopSidebar } from './features/orders/DesktopOrders'
+import { AnalysisPage } from './features/analysis/AnalysisPage'
 import { OrderCard, OrderForm } from './features/orders/OrderComponents'
 import { distanceKm, mapCoordinates, resolveLocation, type Coordinates } from './domain/locations'
 import {
@@ -192,7 +192,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const outboxStorageKey = `tanger-order-outbox:${storageOwner}`
   const [tab, setTab] = useState<AppTab>(() => {
     const requested = devDemo ? new URLSearchParams(window.location.search).get('tab') : null
-    return requested && ['orders', 'inventory', 'profit', 'employees', 'map', 'settings'].includes(requested) ? requested as AppTab : 'orders'
+    return requested && ['orders', 'inventory', 'profit', 'analysis', 'employees', 'map', 'settings'].includes(requested) ? requested as AppTab : 'orders'
   })
   const [dark, setDark] = useState(() => localStorage.getItem('quiet-ledger-theme') === 'dark')
   const [orderRange, setOrderRange] = useState<DateRange>(() => ({ start: monthStartKey(), end: monthEndKey() }))
@@ -219,7 +219,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [routeBusy, setRouteBusy] = useState(false)
   const [routeError, setRouteError] = useState('')
   const [plannedOrders, setPlannedOrders] = useState<Order[]>([])
-  const [, setNotice] = useState('Demo data is saved only in this browser until Supabase is connected.')
+  const [notice, setNotice] = useState('')
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => devDemo ? 'demo-workspace' : null)
   const ordersStorageKey = `tanger-orders:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
   const productsStorageKey = `tanger-products:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
@@ -228,6 +228,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [resourcePhases, setResourcePhases] = useState<Record<ResourceName, ResourcePhase>>(() => devDemo ? Object.fromEntries(Object.keys(emptyResourcePhases).map((key) => [key, 'ready'])) as Record<ResourceName, ResourcePhase> : emptyResourcePhases)
   const [resourceErrors, setResourceErrors] = useState<Partial<Record<ResourceName, string>>>({})
   const [workspaceCode, setWorkspaceCode] = useState<string | null>(() => devDemo ? 'TNG-4821' : null)
+  const [defaultDeliveryCharge, setDefaultDeliveryCharge] = useState(() => devDemo ? 35 : 0)
+  const [deliverySettingBusy, setDeliverySettingBusy] = useState(false)
+  const [deliverySettingMessage, setDeliverySettingMessage] = useState('Used automatically on every new order. You can still change it in the order form.')
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string; join_code: string; is_owner: boolean }[]>(() => devDemo ? [{ id: 'demo-workspace', name: 'Tanger Orders', join_code: 'TNG-4821', is_owner: true }] : [])
   const [members, setMembers] = useState<{ id: string; display_name: string | null }[]>([])
   const [confirmationEmployees, setConfirmationEmployees] = useState<ConfirmationEmployee[]>(() => devDemo ? [{ id: 'demo-amina', name: 'Amina', bonus: 5, bonusBasis: 'per_order', active: true }, { id: 'demo-karim', name: 'Karim', bonus: 5, bonusBasis: 'per_item', active: true }] : [])
@@ -316,6 +319,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   }, [showSearch])
   useEffect(() => { if (tab !== 'orders') setShowSearch(false) }, [tab])
   useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+  useEffect(() => {
     if (devDemo || !workspaceId || !session) return
     let cancelled = false
     void getPushNotificationState().then(async (state) => {
@@ -363,6 +371,24 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     setResourceErrors((current) => { const next = { ...current }; delete next[name]; return next })
   }
 
+  async function saveDefaultDeliveryCharge(form: HTMLFormElement) {
+    const value = Math.max(0, Number(new FormData(form).get('defaultDeliveryCharge')) || 0)
+    setDeliverySettingBusy(true)
+    setDeliverySettingMessage('Saving delivery default…')
+    try {
+      if (!devDemo && supabase && workspaceId) {
+        const { error } = await supabase.from('workspaces').update({ default_delivery_charge: value }).eq('id', workspaceId)
+        if (error) throw error
+      }
+      setDefaultDeliveryCharge(value)
+      setDeliverySettingMessage(`${money(value)} will be prefilled on future orders.`)
+    } catch (error) {
+      setDeliverySettingMessage(error instanceof Error ? error.message : 'Could not save the delivery default.')
+    } finally {
+      setDeliverySettingBusy(false)
+    }
+  }
+
   function resourceFinished(name: ResourceName) {
     setResourcePhases((current) => ({ ...current, [name]: 'ready' }))
   }
@@ -383,12 +409,13 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (!client) return
     await loadResource('workspace', async () => {
       const [workspace, memberships] = await Promise.all([
-        client.from('workspaces').select('join_code').eq('id', id).single(),
+        client.from('workspaces').select('join_code, default_delivery_charge').eq('id', id).single(),
         client.rpc('list_my_workspaces'),
       ])
       if (workspace.error) throw workspace.error
       if (memberships.error) throw memberships.error
       setWorkspaceCode(workspace.data?.join_code ?? null)
+      setDefaultDeliveryCharge(Number(workspace.data?.default_delivery_charge ?? 0))
       setWorkspaces(memberships.data ?? [])
     })
   }
@@ -631,7 +658,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     }
     setOrders((all) => [order, ...all])
     setShowOrder(false)
-    if (supabase && workspaceId) {
+    if (!devDemo && supabase && workspaceId) {
       const pending: PendingOrder = { workspaceId, order, status: 'saving' }
       updatePendingOrders((current) => [pending, ...current.filter((entry) => entry.order.id !== order.id)])
       void syncPendingOrder(pending)
@@ -681,9 +708,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         : confirmationBonusFor(confirmationEmployee, updatedItems)
       : 0
     const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: updatedItems, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
-    if (supabase && workspaceId) {
-      const { data: savedOrder, error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id).select('id, notes_revision').single()
+    if (!devDemo && supabase && workspaceId) {
+      const { data: savedOrder, error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id).eq('workspace_id', workspaceId).select('*').single()
       if (error) { setNotice(error.message); return }
+      const confirmedSavedOrder = orderFromRow(savedOrder)
+      setOrders((all) => all.map((order) => order.id === confirmedSavedOrder.id ? confirmedSavedOrder : order))
       setNotice('Order changes saved.')
       if ((updated.notes ?? '') !== (editingOrder.notes ?? '') && savedOrder.notes_revision) {
         const { data: notification, error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: updated.id, event: 'notes', notesRevision: savedOrder.notes_revision } })
@@ -693,10 +722,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         const { error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: updated.id, event: 'delivered' } })
         if (notificationError) setNotice('Order delivered, but phone notifications could not be sent.')
       }
+    } else {
+      setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
     }
-    setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
     setEditingOrder(null)
-    if (!supabase || !workspaceId) setNotice('Order changes saved.')
+    if (devDemo || !supabase || !workspaceId) setNotice('Order changes saved.')
   }
 
   async function addBundle(form: HTMLFormElement) {
@@ -705,7 +735,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (components.length < 2) { setNotice('Choose at least two products for the bundle.'); return }
     const bundle = { id: uid(), name: String(values.get('name')), cost: 0, price: Number(values.get('price')) || 0, stock: 0, lowStockAt: 0, components }
     setProducts((all) => [...all, bundle])
-    if (supabase && workspaceId) {
+    if (!devDemo && supabase && workspaceId) {
       const { error } = await supabase.from('products').insert({ workspace_id: workspaceId, name: bundle.name, cost: 0, price: bundle.price, stock: 0, low_stock_at: 0, components: bundle.components })
       if (error) setNotice(error.message)
     }
@@ -854,17 +884,23 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const savingPendingOrders = pendingOrders.filter((entry) => entry.status === 'saving')
   const failedResources = Object.keys(resourceErrors) as ResourceName[]
   const resourcesLoading = Object.values(resourcePhases).some((phase) => phase === 'loading')
+  const navigateFromMenu = (nextTab: AppTab) => {
+    if (nextTab === 'employees') setSelectedEmployeeId(null)
+    setTab(nextTab)
+  }
+  const appMenu = () => <AppMenu dark={dark} onNavigate={navigateFromMenu} onPlanRoute={() => void planRoute()} onToggleTheme={() => setDark((value) => !value)} />
 
   if (supabase && session && workspaceStatus === 'checking') return <AppBootScreen />
   if (supabase && session && workspaceStatus === 'error') return <AppBootScreen error={workspaceError} retry={() => void loadCloud()} />
   if (supabase && session && workspaceStatus === 'missing') return <WorkspaceScreen onReady={loadCloud} />
 
   return <main className={`app-shell ${dark ? 'theme-dark' : 'theme-light'}`}>
-    <DesktopSidebar tab={tab} setTab={setTab} displayName={displayName} dark={dark} toggleTheme={() => setDark(!dark)} />
+    <DesktopSidebar tab={tab} setTab={setTab} displayName={displayName} />
+    {notice && <div className="notice-toast" role="status" aria-live="polite">{notice}</div>}
     {(failedPendingOrders.length > 0 || savingPendingOrders.length > 0 || failedResources.length > 0 || resourcesLoading) && <div className={`sync-banner ${failedPendingOrders.length || failedResources.length ? 'has-error' : ''}`} role="status" aria-live="polite">{failedPendingOrders.length > 0 ? <><WarningCircle weight="fill" /><span><b>{failedPendingOrders.length} order{failedPendingOrders.length === 1 ? '' : 's'} waiting to sync</b><small>Your order is safe on this device.</small></span><button onClick={() => failedPendingOrders.forEach((entry) => void syncPendingOrder(entry))}>Retry</button></> : failedResources.length > 0 ? <><WarningCircle weight="fill" /><span><b>Some data could not refresh</b><small>Showing the last saved information.</small></span><button onClick={() => void refreshWorkspaceData()}>Retry</button></> : savingPendingOrders.length > 0 ? <><ArrowsClockwise className="sync-spinner" /><span><b>Saving {savingPendingOrders.length === 1 ? 'order' : `${savingPendingOrders.length} orders`}…</b><small>You can keep working.</small></span></> : <><ArrowsClockwise className="sync-spinner" /><span><b>Refreshing shared data…</b><small>Available screens remain usable.</small></span></>}</div>}
     {tab !== 'map' && <FeatureBoundary resetKey={tab}><div className="ledger-scroll"><div className="ledger-content">
     {tab === 'orders' && <section className="page quiet-orders mobile-orders-view">
-      <PageHeader title="Orders" subtitle={orderRangeTitle} dark={dark} toggleTheme={() => setDark(!dark)} actions={<><button className="square-action" aria-label="Open settings" onClick={() => setTab('settings')}><GearSix /></button><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button><button className="square-action" aria-label="Plan route" onClick={() => void planRoute()}><Path /></button></>} />
+      <PageHeader title="Orders" subtitle={orderRangeTitle} actions={<><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button>{appMenu()}</>} />
       <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
       <div className="filter-rail" aria-label="Filter orders by status">{orderFilters.map((filter) => {
@@ -876,17 +912,17 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{statusFilter === 'Delivered' ? 'Delivered · ' : ''}{group.date === eventDateKey(new Date().toISOString()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && resourcePhases.orders === 'loading' ? <DataLoading label="Loading orders" /> : !visibleOrders.length && !visibleCarryover.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
-    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} planRoute={() => void planRoute()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
+    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page">
-      <PageHeader title="Inventory" subtitle="Products and bundles" actions={<button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>} />
+      <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
       <section className="inventory-overview"><Cube /><b>{products.length}</b><span>items</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
       <div className="inventory-ledger">{products.map((product) => { const low = !product.components && product.stock <= product.lowStockAt; return <article className="inventory-row" key={product.id}><span className="product-icon">{product.components ? <Stack /> : <Package />}</span><div className="inventory-copy"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle` : `FIFO cost ${money(product.cost)} · Selling ${money(product.price)}`}</p>{product.components && <p>FIFO cost {money(productCost(product, products))} · Selling {money(product.price)}</p>}</div><div className={`stock-copy ${low ? 'is-low' : ''}`}><b>{product.components ? bundleStock(product, products) : product.stock}</b><span>{product.components ? 'calculated' : low ? 'Low stock' : 'in stock'}</span></div><div className="inventory-row-actions">{!product.components && <button className="restock-icon" aria-label={`Restock ${product.name}`} onClick={() => setRestockingProduct(product)}><ArrowsClockwise /></button>}<button aria-label={`Edit ${product.name}`} onClick={() => setEditingProduct(product)}><PencilSimple /></button><button className="danger-icon" aria-label={`Delete ${product.name}`} onClick={() => void deleteProduct(product)}><Trash /></button></div></article> })}</div>
       <p className="info-strip"><NoteBlank />Oldest stock is costed first. Bundle stock and cost come from the products inside it.</p>
     </section>}
 
     {tab === 'profit' && <section className="page">
-      <PageHeader title="Profit" subtitle="Delivered orders only" />
+      <PageHeader title="Profit" subtitle="Delivered orders only" actions={appMenu()} />
       <section className="range-control" aria-label="Choose profit date range"><label><span>From</span><div><CalendarBlank /><input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></div></label><i /><label><span>To</span><div><CalendarBlank /><input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></div></label></section>
       <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button className={profitStart === monthStartKey() && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button><button className={profitStart === previousMonthRange().start && profitEnd === previousMonthRange().end ? 'selected' : ''} onClick={() => { const range = previousMonthRange(); setProfitStart(range.start); setProfitEnd(range.end) }}>Last month</button></div>
       <p className="period-caption">{profitStart && profitEnd ? rangeLabel({ start: profitStart, end: profitEnd }) : 'Selected dates'} · By delivery date</p>
@@ -895,20 +931,26 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{order.deliveredAt ? `Delivered ${dateStamp(eventDateKey(order.deliveredAt))}` : "Delivery date unavailable"} · Created {dateStamp(eventDateKey(order.createdAt))}</p><span>{order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
     </section>}
 
+    {tab === 'analysis' && <section className="page analysis-page">
+      <PageHeader title="Analysis" subtitle="Sales, costs, products, and timing" actions={appMenu()} />
+      <AnalysisPage orders={orders} products={products} employees={confirmationEmployees} />
+    </section>}
+
 
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
-        <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => setEditingConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button></>} />
+        <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => setEditingConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button>{appMenu()}</>} />
         <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in this period</small></section><h3>Confirmation history · {employeePeriodLabel}</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(eventDateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations in this period" copy="Choose another period to see earlier work." />}</div>
       </> : <>
-        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" actions={<button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add employee</button>} />
+        <PageHeader title="Employees" subtitle="Confirmation work and bonuses" actions={<><button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add employee</button>{appMenu()}</>} />
         <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><p className="page-intro">Tap an employee to view confirmation history.</p>
         <div className="employee-ledger">{employeeSummaries.map(({ employee, count, itemCount, bonus, productNames }) => <button className="employee-row" key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)}><span className="employee-avatar">{employee.name.slice(0, 1).toUpperCase()}</span><span className="employee-name"><b>{employee.name}</b><small className={employee.active ? 'active' : 'inactive'}><i />{employee.active ? 'Active' : 'Inactive'}</small></span><span className="employee-work"><b><User />{employee.bonusBasis === 'per_item' ? `${itemCount} confirmed ${itemCount === 1 ? 'item' : 'items'}` : `${count} confirmed ${count === 1 ? 'order' : 'orders'}`}</b><small>{productNames.length ? productNames.join(' · ') : 'No products confirmed yet'}</small></span><strong>{money(bonus)}</strong><CaretRight /></button>)}{!employeeSummaries.length && <EmptyState icon={<UsersThree />} title="No employees yet" copy="Use Add employee above to create the first one." />}</div>
       </>}
     </section>}
 
     {tab === 'settings' && <section className="page settings-page">
-      <PageHeader title="Settings" subtitle="Workspaces, notifications, and app controls" back={() => setTab('orders')} />
+      <PageHeader title="Settings" subtitle="Workspace and app controls" back={() => setTab('orders')} actions={appMenu()} />
+      <section className="settings-section delivery-default-setting"><div className="settings-section-head"><div><h2>Default delivery cost</h2><p aria-live="polite">{deliverySettingMessage}</p></div></div><form onSubmit={(event) => { event.preventDefault(); void saveDefaultDeliveryCharge(event.currentTarget) }}><label className="form-field"><span>Cost per new order (DH)</span><input required name="defaultDeliveryCharge" type="number" min="0" step="0.01" defaultValue={defaultDeliveryCharge} key={`${workspaceId}-${defaultDeliveryCharge}`} /></label><button className="primary" disabled={deliverySettingBusy}>{deliverySettingBusy ? 'Saving…' : 'Save default'}</button></form></section>
       <section className="settings-section"><h2>Shared workspace</h2><p>Use this code to invite a partner.</p><button className="workspace-code" onClick={() => { if (workspaceCode) void navigator.clipboard.writeText(workspaceCode); setNotice('Workspace code copied.') }}><strong>{workspaceCode ?? 'Loading…'}</strong><Copy /></button><div className="workspace-list">{workspaces.map((workspace) => <div className={workspace.id === workspaceId ? 'current' : ''} key={workspace.id}><button onClick={() => void switchWorkspace(workspace.id)}><Buildings /><span>{workspace.name}{workspace.id === workspaceId && <small> · Current</small>}</span></button>{workspace.is_owner && <button className="danger-icon" aria-label={`Delete ${workspace.name}`} onClick={() => void deleteWorkspace(workspace.id, workspace.name)}><Trash /></button>}</div>)}</div><div className="settings-inline-actions"><button onClick={() => void manageWorkspace('create')}><Plus />Create workspace</button><button onClick={() => void manageWorkspace('join')}><UserPlus />Join workspace</button></div></section>
       <section className="settings-section notification-settings"><div className="settings-section-head"><div><h2>Order notifications</h2><p aria-live="polite">{pushMessage}</p></div><span className={`notification-state state-${pushState}`}>{pushState === 'enabled' ? <BellRinging weight="fill" /> : <BellSlash />}</span></div>{pushState === 'unsupported' && <p className="notification-help">Install the app on your Home Screen and open it over HTTPS to enable phone notifications.</p>}{pushState === 'denied' && <p className="notification-help">Notifications are blocked in this phone’s settings. Allow Tanger Orders, then reopen the app.</p>}<button className={`notification-toggle ${pushState === 'enabled' ? 'is-enabled' : ''}`} disabled={pushBusy || pushState === 'unsupported' || pushState === 'denied'} onClick={() => void (pushState === 'enabled' ? turnOffPushNotifications() : turnOnPushNotifications())}>{pushState === 'enabled' ? <><BellSlash />Turn off on this phone</> : <><BellRinging />{pushBusy ? 'Connecting…' : 'Enable on this phone'}</>}</button></section>
       <section className="account-actions"><button onClick={() => void loadCloud()}><ArrowsClockwise />Refresh shared data</button><button className="sign-out" onClick={() => void supabase?.auth.signOut()}><SignOut />Sign out</button></section>
@@ -916,15 +958,15 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     </div></div></FeatureBoundary>}
 
-    {tab === 'map' && <FeatureBoundary resetKey={tab}><Suspense fallback={<section className="map-screen"><DataLoading label="Loading map" /></section>}><section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section></Suspense></FeatureBoundary>}
+    {tab === 'map' && <FeatureBoundary resetKey={tab}><Suspense fallback={<section className="map-screen"><DataLoading label="Loading map" /></section>}><section className="map-screen"><DeliveryMap orders={orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled')} /><div className="map-heading"><h1>Map</h1><p>{orders.filter((order) => order.status !== 'Delivered' && order.status !== 'Canceled').length} active deliveries</p></div><div className="map-menu">{appMenu()}</div><div className="map-legend"><span><i className="delivery" />{orders.filter((order) => order.status === 'Out for delivery').length} Out for delivery</span><b>·</b><span><i className="confirmed" />{orders.filter((order) => order.status === 'Confirmed').length} Confirmed</span></div></section></Suspense></FeatureBoundary>}
 
-    <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders' || tab === 'settings'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="employees" label="Employees" active={tab === 'employees'} onClick={() => { setSelectedEmployeeId(null); setTab('employees') }} /><NavButton icon="map" label="Map" active={tab === 'map'} onClick={() => setTab('map')} /></nav>
+    <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="analysis" label="Analysis" active={tab === 'analysis'} onClick={() => setTab('analysis')} /></nav>
     {tab === 'orders' && <button className="ledger-fab mobile-only-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
     {tab === 'inventory' && <button className="ledger-fab inventory-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
-    {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={addOrder} /></Modal>}
-    {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
+    {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={addOrder} /></Modal>}
+    {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
     {showConfirmationTeam && <Modal title="Manage employees" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Choose whether each employee earns a fixed amount per confirmed order or per item quantity. Admin confirmations have no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmed {employee.bonusBasis === 'per_item' ? 'item' : 'order'} · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => { setShowConfirmationTeam(false); setEditingConfirmationEmployee(employee) }}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
     {editingConfirmationEmployee && <Modal title="Edit employee" close={() => setEditingConfirmationEmployee(null)}><form onSubmit={(event) => { event.preventDefault(); void editConfirmationEmployee(event.currentTarget) }} className="form employee-edit-form"><label className="form-field"><span>Employee name</span><input required name="name" defaultValue={editingConfirmationEmployee.name} autoFocus /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked={editingConfirmationEmployee.bonusBasis === 'per_order'} /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" defaultChecked={editingConfirmationEmployee.bonusBasis === 'per_item'} /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue={editingConfirmationEmployee.bonus} /></label><button className="primary full">Save changes</button></form></Modal>}
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Product name</span><input required name="name" /></label><div className="form-row"><label className="form-field"><span>Buying cost</span><input required name="cost" type="number" /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" /></label></div><div className="form-row"><label className="form-field"><span>Opening stock</span><input required name="stock" type="number" /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue="3" /></label></div><button className="primary full">Save product</button></form></Modal>}

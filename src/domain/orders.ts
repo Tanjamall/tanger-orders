@@ -1,6 +1,6 @@
 import type { InventoryBatch, Order, PaymentStatus, Product, Status } from '../types'
 
-export type AppTab = 'orders' | 'inventory' | 'profit' | 'employees' | 'map' | 'settings'
+export type AppTab = 'orders' | 'inventory' | 'profit' | 'analysis' | 'employees' | 'map' | 'settings'
 export type BonusBasis = 'per_order' | 'per_item'
 export type ConfirmationEmployee = { id: string; name: string; bonus: number; bonusBasis: BonusBasis; active: boolean }
 export type DateRange = { start: string; end: string }
