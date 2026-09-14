@@ -1,3 +1,4 @@
+import { whatsappNumber } from '../../domain/orders'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
   ArrowSquareOut,
@@ -174,7 +175,7 @@ function DesktopOrderDetail({ order, products, members, confirmationEmployees, o
 
   return <div className="desktop-detail-inner">
     <header><div><span>Order</span><b>#{order.id.slice(0, 8).toUpperCase()}</b></div><StatusSelector order={order} onStatus={onStatus} detail /></header>
-    <section className="desktop-detail-customer"><span>Customer</span><h2>{order.client}</h2><a href={`https://wa.me/${order.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">{order.phone}<ArrowSquareOut /></a></section>
+    <section className="desktop-detail-customer"><span>Customer</span><h2>{order.client}</h2><a href={`https://wa.me/${whatsappNumber(order.phone)}`} target="_blank" rel="noreferrer">{order.phone}<ArrowSquareOut /></a></section>
     <section className="desktop-detail-block"><span>Delivery address</span><p>{order.address}</p>{order.locationUrl?.trim() && <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><MapPin />Open in maps<ArrowSquareOut /></a>}</section>
     <section className="desktop-detail-block"><span>Products</span>{order.items.map((item) => <div className="desktop-detail-line" key={`${order.id}-${item.productId}`}><p>{products.find((product) => product.id === item.productId)?.name ?? 'Product'} <small>×{item.quantity}</small></p><b>{money(item.quantity * item.unitPrice)}</b></div>)}<div className="desktop-detail-line detail-total"><p>Total</p><b>{money(total)}</b></div></section>
     <section className="desktop-detail-grid"><div><span>Payment</span><b>{order.paymentStatus}</b></div><div><span>Assignee</span><b>{assignee}</b></div><div><span>Confirmed by</span><b>{confirmer}</b></div><div><span>Created</span><b>{shortDate(eventDateKey(order.createdAt))}</b></div>{order.status === 'Delivered' && <div><span>Delivered</span><b>{order.deliveredAt ? shortDate(eventDateKey(order.deliveredAt)) : 'Date unavailable'}</b></div>}</section>

@@ -1,6 +1,6 @@
 import { eventDateKey, itemCost, orderActivityDate } from './orders'
 import type { ConfirmationEmployee, DateRange } from './orders'
-import type { Order, Product } from '../types'
+import type { InventoryBatch, Order, Product } from '../types'
 
 export type AnalyticsPreset = 'month' | '30d' | '90d' | 'all'
 
@@ -170,4 +170,27 @@ export function analyticsRange(preset: AnalyticsPreset, now = new Date()): DateR
   else start.setDate(start.getDate() - (preset === '30d' ? 29 : 89))
   const key = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
   return { start: key(start), end: key(end) }
+}
+
+export type ProductEvent = { id: string; date: string; label: string; detail: string; quantity: number; amount: number; profit?: number }
+
+export function productHistory(productId: string, orders: Order[], products: Product[], employees: ConfirmationEmployee[], batches: InventoryBatch[], range: DateRange | null): ProductEvent[] {
+  const events: ProductEvent[] = []
+  for (const order of orders) {
+    const items = order.items.filter((item) => item.productId === productId)
+    if (!items.length) continue
+    const date = orderActivityDate(order)
+    if (!rangeContains(eventDateKey(date), range)) continue
+    const financials = orderFinancials(order, products, employees)
+    const revenue = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
+    const cost = items.reduce((sum, item) => sum + itemCost(item, products), 0)
+    const shared = financials.revenue ? (financials.deliveryCost + financials.otherCost + financials.confirmationCost) * revenue / financials.revenue : 0
+    events.push({ id: `order-${order.id}`, date, label: order.status === 'Delivered' ? 'Sale' : order.status, detail: order.client, quantity: items.reduce((sum, item) => sum + item.quantity, 0), amount: revenue, profit: order.status === 'Delivered' ? revenue - cost - shared : undefined })
+  }
+  for (const batch of batches) {
+    if (batch.productId !== productId || !rangeContains(eventDateKey(batch.receivedAt), range)) continue
+    const labels = { restock: 'Restock', opening_balance: 'Opening stock', correction: 'Stock correction', legacy_delivery: 'Legacy cost record' }
+    events.push({ id: `batch-${batch.id}`, date: batch.receivedAt, label: labels[batch.source], detail: `${batch.unitCost} DH / unit`, quantity: batch.originalQuantity, amount: batch.originalQuantity * batch.unitCost })
+  }
+  return events.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
 }

@@ -5,6 +5,14 @@ export type BonusBasis = 'per_order' | 'per_item'
 export type ConfirmationEmployee = { id: string; name: string; bonus: number; bonusBasis: BonusBasis; active: boolean }
 export type DateRange = { start: string; end: string }
 
+export function normalizePhone(value: string) {
+  const compact = value.trim().replace(/[\s().-]/g, '')
+  if (/^0[67]\d{8}$/.test(compact)) return `+212${compact.slice(1)}`
+  return compact
+}
+
+export const whatsappNumber = (value: string) => normalizePhone(value).replace(/^00/, '').replace(/\D/g, '')
+
 export const statuses: Status[] = ['New', 'Confirmed', 'Out for delivery', 'Delivered', 'Canceled']
 export const orderFilters: { label: string; value: Status | 'All' }[] = [
   { label: 'All', value: 'All' },

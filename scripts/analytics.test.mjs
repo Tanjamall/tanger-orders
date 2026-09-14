@@ -47,3 +47,27 @@ test('analysis ranges are inclusive and anchored to the local calendar', () => {
   assert.deepEqual(analyticsRange('30d', now), { start: '2026-08-10', end: '2026-09-08' })
   assert.equal(analyticsRange('all', now), null)
 })
+
+const { productHistory } = await import(`data:text/javascript;base64,${Buffer.from(analyticsCompiled).toString('base64')}`)
+const { normalizePhone, whatsappNumber } = await import(ordersUrl)
+test('Moroccan mobile numbers normalize without changing international numbers', () => {
+  assert.equal(normalizePhone('06 12 34 56 78'), '+212612345678')
+  assert.equal(normalizePhone('0700000000'), '+212700000000')
+  assert.equal(whatsappNumber('0600000000'), '212600000000')
+  assert.equal(whatsappNumber('+212612345678'), '212612345678')
+  assert.equal(whatsappNumber('00212612345678'), '212612345678')
+  assert.equal(normalizePhone('+33612345678'), '+33612345678')
+  assert.equal(normalizePhone('0612'), '0612')
+})
+test('product history combines receipts and sales, with inclusive date filters', () => {
+  const batches = [{ id: 'b1', productId: 'p1', unitCost: 40, originalQuantity: 10, remainingQuantity: 8, receivedAt: '2026-09-01T12:00:00Z', source: 'restock' }]
+  const history = productHistory('p1', orders, products, employees, batches, null)
+  assert.equal(history.length, 3)
+  assert.equal(history.find(e => e.label === 'Sale').profit, 85)
+  assert.equal(history.find(e => e.label === 'Restock').amount, 400)
+  assert.equal(history.find(e => e.label === 'Canceled').profit, undefined)
+  const filtered = productHistory('p1', orders, products, employees, batches, { start: '2026-09-05', end: '2026-09-05' })
+  assert.equal(filtered.length, 1)
+  assert.equal(filtered[0].label, 'Sale')
+  assert.equal(buildAnalytics(orders, products, employees, { start: '2026-09-05', end: '2026-09-05' }).totals.profit, 85)
+})

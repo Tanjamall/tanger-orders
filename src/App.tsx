@@ -1,3 +1,4 @@
+import { normalizePhone } from './domain/orders'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
@@ -652,7 +653,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const items = [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }]
     const order: Order = {
-      id: uid(), client: String(values.get('client') || ''), phone: String(values.get('phone') || ''), address: String(values.get('address') || ''),
+      id: uid(), client: String(values.get('client') || ''), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address') || ''),
       items, status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
       assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: isConfirmedOrder(status) ? confirmationBonusFor(confirmationEmployee, items) : 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
@@ -707,7 +708,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         ? editingOrder.confirmationBonus ?? confirmationBonusFor(confirmationEmployee, updatedItems)
         : confirmationBonusFor(confirmationEmployee, updatedItems)
       : 0
-    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: String(values.get('phone')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: updatedItems, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
+    const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: updatedItems, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
     if (!devDemo && supabase && workspaceId) {
       const { data: savedOrder, error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id).eq('workspace_id', workspaceId).select('*').single()
       if (error) { setNotice(error.message); return }
@@ -933,7 +934,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'analysis' && <section className="page analysis-page">
       <PageHeader title="Analysis" subtitle="Sales, costs, products, and timing" actions={appMenu()} />
-      <AnalysisPage orders={orders} products={products} employees={confirmationEmployees} />
+      <AnalysisPage batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} />
     </section>}
 
 

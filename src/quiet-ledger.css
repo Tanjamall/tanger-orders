@@ -838,3 +838,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .desktop-detail-inner footer button { min-height: 43px; font-size: 11px; }
   .desktop-detail-inner footer small { font-size: 10px; }
 }
+.analysis-custom { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin:12px 0; }
+.analysis-custom label, .product-history > label { display:grid; gap:6px; font-size:12px; }
+.analysis-custom input, .analysis-custom button, .analysis-trend select, .product-history select, .product-history input[type=search] { min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--paper); color:var(--ink); max-width:100%; }
+.analysis-chart-detail { position:relative; min-height:48px; padding:8px 30px 8px 0; font-size:11px; }
+.analysis-chart-detail strong, .analysis-chart-detail span { display:block; }
+.analysis-chart-detail span { color:var(--muted); margin-top:4px; }
+.analysis-chart-detail button { position:absolute; right:0; top:0; width:36px; height:36px; border:0; background:transparent; color:var(--ink); font-size:22px; }
+.interactive-bars { overflow-x:auto; height:160px; padding-bottom:8px; }
+.interactive-bars > button { display:grid; grid-template-rows:113px 20px; flex:1 0 44px; gap:7px; min-width:44px; border:0; padding:0 3px; background:transparent; color:var(--ink); cursor:pointer; }
+.interactive-bars > button > span { display:flex; align-items:end; height:113px; border-bottom:1px solid var(--line); }
+.interactive-bars > button[aria-pressed=true] i { background:var(--pine); }
+.interactive-bars small { font-size:9px; }
+.product-history-link { border:0; background:transparent; color:var(--pine); padding:10px 0; text-align:left; font:inherit; font-weight:600; cursor:pointer; }
+.product-history { scroll-margin-top:80px; }
+.product-history select { width:100%; margin:10px 0; }
+.product-history .history-scope { display:flex; align-items:center; min-height:44px; gap:8px; }
+.history-events { max-height:480px; overflow-y:auto; }
+.history-events article { display:flex; justify-content:space-between; gap:12px; padding:14px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.history-events article > div { min-width:0; }
+.history-events article > div:last-child { text-align:right; }
+.history-events small { display:block; color:var(--muted); margin-top:5px; overflow-wrap:anywhere; }
