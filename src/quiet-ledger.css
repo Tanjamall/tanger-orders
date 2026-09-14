@@ -486,7 +486,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .delivery-default-setting form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; margin-top: 13px; }
 .delivery-default-setting .primary { min-height: 43px; box-shadow: none; }
 
-.analysis-page-content { display: grid; gap: 17px; }
+.analysis-page-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 17px; min-width: 0; }
+.analysis-page-content > * { min-width: 0; }
 .analysis-range { margin-top: 2px; }
 .analysis-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 148px; padding: 25px 23px; border-radius: 17px; overflow: hidden; background: var(--pine); color: var(--paper-raised); box-shadow: 0 13px 28px rgb(18 49 39 / 16%); }
 .theme-dark .analysis-hero { color: #0a241b; }
@@ -838,24 +839,53 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .desktop-detail-inner footer button { min-height: 43px; font-size: 11px; }
   .desktop-detail-inner footer small { font-size: 10px; }
 }
-.analysis-custom { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin:12px 0; }
+.analysis-custom { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; align-items:end; margin:12px 0; grid-column: 1 / -1; }
+.analysis-custom > label { min-width: 0; }
+.analysis-custom input { width: 100%; min-width: 0; }
+.analysis-custom > button { grid-column: 1 / -1; }
 .analysis-custom label, .product-history > label { display:grid; gap:6px; font-size:12px; }
 .analysis-custom input, .analysis-custom button, .analysis-trend select, .product-history select, .product-history input[type=search] { min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:var(--paper); color:var(--ink); max-width:100%; }
 .analysis-chart-detail { position:relative; min-height:48px; padding:8px 30px 8px 0; font-size:11px; }
 .analysis-chart-detail strong, .analysis-chart-detail span { display:block; }
 .analysis-chart-detail span { color:var(--muted); margin-top:4px; }
 .analysis-chart-detail button { position:absolute; right:0; top:0; width:36px; height:36px; border:0; background:transparent; color:var(--ink); font-size:22px; }
-.interactive-bars { overflow-x:auto; height:160px; padding-bottom:8px; }
+.interactive-bars { overflow-x:auto; width:100%; min-width:0; max-width:100%; height:160px; padding-bottom:8px; overscroll-behavior-x:contain; }
 .interactive-bars > button { display:grid; grid-template-rows:113px 20px; flex:1 0 44px; gap:7px; min-width:44px; border:0; padding:0 3px; background:transparent; color:var(--ink); cursor:pointer; }
 .interactive-bars > button > span { display:flex; align-items:end; height:113px; border-bottom:1px solid var(--line); }
 .interactive-bars > button[aria-pressed=true] i { background:var(--pine); }
 .interactive-bars small { font-size:9px; }
 .product-history-link { border:0; background:transparent; color:var(--pine); padding:10px 0; text-align:left; font:inherit; font-weight:600; cursor:pointer; }
 .product-history { scroll-margin-top:80px; }
-.product-history select { width:100%; margin:10px 0; }
+.product-history select { width:100%; min-width:0; margin:10px 0; text-overflow:ellipsis; }
+.product-history input[type=search] { width:100%; min-width:0; }
+.product-history-link { max-width:100%; overflow-wrap:anywhere; }
 .product-history .history-scope { display:flex; align-items:center; min-height:44px; gap:8px; }
 .history-events { max-height:480px; overflow-y:auto; }
 .history-events article { display:flex; justify-content:space-between; gap:12px; padding:14px 0; border-bottom:1px solid var(--line); font-size:12px; }
 .history-events article > div { min-width:0; }
 .history-events article > div:last-child { text-align:right; }
 .history-events small { display:block; color:var(--muted); margin-top:5px; overflow-wrap:anywhere; }
+
+@media (max-width: 699px) {
+  .analysis-range { gap:6px; }
+  .analysis-range button { min-height:40px; padding:8px 10px; }
+  .analysis-insight { grid-template-columns:minmax(0, 1fr); gap:8px; padding:14px 12px; }
+  .analysis-insight strong { font-size:16px; overflow-wrap:anywhere; }
+  .analysis-insight small, .analysis-insight p { font-size:10px; }
+  .analysis-section header { align-items:center; flex-wrap:wrap; }
+  .analysis-section header > div { min-width:0; flex:1 1 160px; }
+  .analysis-trend select { width:auto; flex:0 0 auto; }
+  .analysis-hero { padding:22px 18px; gap:10px; }
+  .analysis-hero > div { min-width:0; }
+  .analysis-hero strong { font-size:34px; overflow-wrap:anywhere; }
+  .analysis-hero > svg { width:32px; height:32px; }
+  .product-ranking article { grid-template-columns:22px minmax(0, 1fr); padding:12px 0; gap:4px 8px; }
+  .product-ranking article > span { grid-column:2; display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; text-align:left; }
+  .product-ranking article p { white-space:normal; line-height:1.5; }
+  .product-ranking article > span small { font-size:10px; }
+  .history-events article { display:grid; grid-template-columns:minmax(0, 1fr); gap:8px; }
+  .history-events article > div:last-child { text-align:left; }
+  .history-events strong { overflow-wrap:anywhere; }
+  .product-history .history-scope { align-items:center; }
+  .history-scope input { flex:0 0 auto; width:18px; height:18px; }
+}
