@@ -1,4 +1,8 @@
 import { normalizePhone } from './domain/orders'
+import { recoverSessionRead } from './supabase'
+import { isExpiredJwt } from './sessionRecovery'
+import { App as NativeApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
@@ -136,6 +140,18 @@ export default function App() {
   const [loading, setLoading] = useState(Boolean(supabase))
   const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecoveryUrl)
   useEffect(() => { void initializePushNotifications() }, [])
+  useEffect(() => {
+    if (!supabase || !Capacitor.isNativePlatform()) return
+    const auth = supabase.auth
+    const listener = NativeApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) {
+        void auth.startAutoRefresh()
+        window.dispatchEvent(new Event('focus'))
+      } else void auth.stopAutoRefresh()
+    })
+    void NativeApp.getState().then(({ isActive }) => { if (isActive) void auth.startAutoRefresh() })
+    return () => { void listener.then((handle) => handle.remove()); void auth.stopAutoRefresh() }
+  }, [])
   useEffect(() => {
     if (!supabase) return
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) })
@@ -402,7 +418,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
   async function loadResource(name: ResourceName, work: () => Promise<void>) {
     resourceStarted(name)
-    try { await work(); resourceFinished(name) } catch (error) { resourceFailed(name, error) }
+    try { await recoverSessionRead(work); resourceFinished(name) } catch (error) { resourceFailed(name, error) }
   }
 
   async function loadWorkspaceMeta(id: string) {
@@ -482,9 +498,16 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (!supabase || !session) return
     if (!workspaceId) setWorkspaceStatus('checking')
     setWorkspaceError('')
-    const { data: profile, error } = await supabase.from('profiles').select('workspace_id').eq('id', session.user.id).single()
-    if (error) {
-      setWorkspaceError(error.message)
+    const client = supabase
+    let profile
+    try {
+      profile = await recoverSessionRead(async () => {
+        const result = await client.from('profiles').select('workspace_id').eq('id', session.user.id).single()
+        if (result.error) throw result.error
+        return result.data
+      })
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String((error as { message?: string })?.message || 'Connection failed. Please try again.'))
       if (workspaceId) resourceFailed('workspace', error)
       else setWorkspaceStatus('error')
       return
@@ -507,10 +530,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   }
   useEffect(() => { if (!devDemo) void loadCloud() }, [session])
   useEffect(() => {
-    const refreshWhenVisible = () => { if (document.visibilityState === 'visible' && workspaceStatus === 'ready') void refreshWorkspaceData() }
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') { if (workspaceStatus === 'ready') void refreshWorkspaceData(); else if (workspaceStatus === 'error') void loadCloud() } }
     window.addEventListener('focus', refreshWhenVisible)
+    window.addEventListener('online', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
-    return () => { window.removeEventListener('focus', refreshWhenVisible); document.removeEventListener('visibilitychange', refreshWhenVisible) }
+    return () => { window.removeEventListener('focus', refreshWhenVisible); window.removeEventListener('online', refreshWhenVisible); document.removeEventListener('visibilitychange', refreshWhenVisible) }
   }, [workspaceId, workspaceStatus])
   useEffect(() => {
     if (!supabase || !workspaceId || workspaceStatus !== 'ready') return
@@ -1126,7 +1150,8 @@ function WorkspaceScreen({ onReady }: { onReady: () => Promise<void> }) {
 }
 
 function AppBootScreen({ error, retry }: { error?: string; retry?: () => void }) {
-  return <main className="gate app-boot" aria-live="polite"><img src="/icon-192.png" alt="" /><p className="eyebrow">TANGER ORDERS</p><h1>{error ? 'Could not open your workspace' : 'Opening your workspace…'}</h1><p>{error ? 'Your saved information is untouched. Check your connection and try again.' : 'Loading your shared orders and settings.'}</p>{error ? <button className="primary" onClick={retry}><ArrowsClockwise />Try again</button> : <span className="boot-loader" aria-hidden="true" />}{error && <small>{error}</small>}</main>
+  const expired = isExpiredJwt({ message: error }) || /refresh token|session ended/i.test(error ?? '')
+  return <main className="gate app-boot" aria-live="polite"><img src="/icon-192.png" alt="" /><p className="eyebrow">TANGER ORDERS</p><h1>{error ? expired ? 'Please reconnect your account' : 'Could not open your workspace' : 'Opening your workspace…'}</h1><p>{error ? expired ? 'Your sign-in could not be renewed. Retry the connection, or sign in again. Your saved orders are safe.' : 'Your saved information is untouched. Check your connection and try again.' : 'Loading your shared orders and settings.'}</p>{error ? <div className="boot-actions"><button className="primary" onClick={retry}><ArrowsClockwise />Retry connection</button><button className="boot-signin" onClick={() => void supabase?.auth.signOut({ scope: 'local' })}>Sign in again</button></div> : <span className="boot-loader" aria-hidden="true" />}</main>
 }
 
 function DataLoading({ label }: { label: string }) {

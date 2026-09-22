@@ -563,7 +563,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* Resilient loading and background synchronization */
-.app-boot { gap: 10px; }
+.app-boot { display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
+.app-boot .boot-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:12px; }
+.gate.app-boot .primary { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:48px; background:#005442; color:#fff8e9; }
+.gate.app-boot .primary svg { width:20px; height:20px; color:inherit; }
+.boot-signin { min-height:48px; padding:12px 14px; border:1px solid #005442; border-radius:11px; color:#005442; background:#fff8e9; font-weight:700; }
+.app-boot button:focus-visible { outline:3px solid #cf8b12; outline-offset:3px; }
 .app-boot > img { width: 76px; height: 76px; margin-bottom: 8px; border-radius: 22px; box-shadow: 0 14px 34px rgb(19 59 50 / 14%); }
 .app-boot > .primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: auto; min-width: 132px; margin-top: 8px; }
 .app-boot > small { max-width: 420px; color: var(--muted); font-size: 11px; line-height: 1.5; }
