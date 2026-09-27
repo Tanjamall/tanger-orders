@@ -1,26 +1,29 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpRight, DownloadSimple } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ArrowDown, ArrowUp, ArrowUpRight, DownloadSimple, CalendarBlank, CaretDown, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { analyticsChange, analyticsCsv, analyticsRange, buildAnalytics, buildBusinessAnalytics, previousAnalyticsRange, productHistory, type AnalyticsPreset } from '../../domain/analytics'
 import { money, rangeLabel, type ConfirmationEmployee } from '../../domain/orders'
 import type { InventoryBatch, Order, Product } from '../../types'
 import { TrendChart } from './TrendChart'
+import { ProductSalesChart } from './ProductSalesChart'
 import { BusinessPanels } from './BusinessPanels'
 import './analysis.css'
 
-type AnalysisPageProps = { orders: Order[]; products: Product[]; employees: ConfirmationEmployee[]; batches: InventoryBatch[]; dataState?: 'ready' | 'loading' | 'error' }
+type AnalysisPageProps = { orders: Order[]; products: Product[]; employees: ConfirmationEmployee[]; batches: InventoryBatch[]; dataState?: 'ready' | 'loading' | 'error'; menu: ReactNode }
 const presets: { value: AnalyticsPreset; label: string }[] = [{ value: 'month', label: 'This month' }, { value: '30d', label: '30 days' }, { value: '90d', label: '90 days' }, { value: 'all', label: 'All time' }]
 type SortKey = 'name' | 'units' | 'orders' | 'revenue' | 'cost' | 'profit' | 'margin'
-const reportPages = [['overview', 'Overview'], ['products', 'Products'], ['customers', 'Customers'], ['inventory', 'Inventory'], ['about', 'About the numbers']] as const
+const reportPages = [['overview', 'Overview'], ['products', 'Products'], ['customers', 'Customers'], ['inventory', 'Inventory'], ['about', 'About']] as const
 type ReportPage = typeof reportPages[number][0]
 const pageFromLocation = (): ReportPage => reportPages.find(([page]) => window.location.hash === `#analysis/${page}`)?.[0] ?? 'overview'
 export const percent = (value: number, total: number) => total ? `${(value / total * 100).toFixed(1)}%` : '—'
 const decimalMoney = (value: number) => `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })} DH`
 
-function Metric({ label, value, detail, current, previous, accent = false }: { label: string; value: string; detail: string; current: number; previous?: number; accent?: boolean }) {
-  return <article className={`growth-metric ${accent ? 'metric-accent' : ''}`}><span>{label}</span><strong>{value}</strong><p>{detail}</p>{previous !== undefined && <small className={current < previous ? 'change-down' : current > previous ? 'change-up' : ''}>{current !== previous && (current > previous ? <ArrowUp /> : <ArrowDown />)}{analyticsChange(current, previous)}<em> vs previous</em></small>}</article>
+function Metric({ label, value, current, previous, margin = false }: { label: string; value: string; current: number; previous?: number; margin?: boolean }) {
+  const change = previous === undefined ? '' : margin ? `${current > previous ? '+' : ''}${(current - previous).toFixed(1)} pp` : analyticsChange(current, previous)
+  return <article className="growth-metric"><strong>{value}</strong><span>{label}</span>{previous !== undefined && <small className={current < previous ? 'change-down' : 'change-up'} title="Compared with the previous period">{previous !== 0 && current !== previous && (current > previous ? <ArrowUp /> : <ArrowDown />)}{change}</small>}</article>
 }
+const amount = (value: number) => value.toLocaleString('en-GB', { maximumFractionDigits: 2 })
 
-export function AnalysisPage({ orders, products, employees, batches, dataState = 'ready' }: AnalysisPageProps) {
+export function AnalysisPage({ orders, products, employees, batches, dataState = 'ready', menu }: AnalysisPageProps) {
   const [page, setPage] = useState<ReportPage>(pageFromLocation)
   useEffect(() => {
     const update = () => setPage(pageFromLocation())
@@ -33,6 +36,7 @@ export function AnalysisPage({ orders, products, employees, batches, dataState =
     if (next === page) return
     window.history.pushState(null, '', `#analysis/${next}`)
     setPage(next)
+    if (next !== 'products') setProductId('')
   }
   const [preset, setPreset] = useState<AnalyticsPreset | 'custom'>('month')
   const [custom, setCustom] = useState(() => analyticsRange('month')!)
@@ -40,7 +44,8 @@ export function AnalysisPage({ orders, products, employees, batches, dataState =
   const [compare, setCompare] = useState(true)
   const [productId, setProductId] = useState('')
   const [search, setSearch] = useState('')
-  const [historySearch, setHistorySearch] = useState('')
+  const [activity, setActivity] = useState<'all' | 'sales' | 'restocks'>('all')
+  const [dateOpen, setDateOpen] = useState(false)
   const [historyAll, setHistoryAll] = useState(true)
   const [sort, setSort] = useState<{ key: SortKey; ascending: boolean }>({ key: 'profit', ascending: false })
   const [exported, setExported] = useState('')
@@ -57,7 +62,17 @@ export function AnalysisPage({ orders, products, employees, batches, dataState =
     return (sort.ascending ? 1 : -1) * result
   }), [analysis.products, sort, search])
   const { totals } = analysis
-  const openHistory = (id: string) => { setProductId(id); setHistorySearch(''); navigate('products'); requestAnimationFrame(() => { document.getElementById('product-history')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); document.getElementById('history-product')?.focus({ preventScroll: true }) }) }
+  const openHistory = (id: string) => {
+    const closing = productId === id && page === 'products'
+    setProductId(closing ? '' : id); setActivity('all'); navigate('products')
+    if (!closing && window.matchMedia('(max-width:1099px)').matches) requestAnimationFrame(() => document.getElementById('product-history')?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+  }
+  const closeHistory = () => { const id = productId; setProductId(''); requestAnimationFrame(() => document.getElementById(`product-row-${id}`)?.focus({ preventScroll: true })) }
+
+  const selectedProduct = analysis.products.find(p => p.id === productId)
+  const selectedName = choices.find(([id]) => id === productId)?.[1] ?? 'Product history'
+  const events = history.filter(entry => activity === 'all' || (activity === 'sales' ? entry.label === 'Sale' : entry.label === 'Restock'))
+
   function exportReport() {
     const rows: (string | number)[][] = [
       ['Tanger Orders — business report'], ['Period', range?.start ?? 'All time', range?.end ?? 'All time'],
@@ -69,7 +84,7 @@ export function AnalysisPage({ orders, products, employees, batches, dataState =
       ['Product', 'Units', 'Orders', 'Revenue DH', 'Allocated cost DH', 'Order profit DH', 'Margin %'],
       ...analysis.products.map(p => [p.name, p.units, p.orders, p.revenue, p.cost, p.profit, p.margin]), [],
       ['Delivery date', 'Revenue DH', 'Order profit DH', 'Delivered orders'], ...analysis.days.map(p => [p.key, p.revenue, p.profit, p.orders]), [],
-      ['Payments on selected deliveries', 'DH'], ['Marked paid', business.paid], ['Not marked paid', business.unpaid], [],
+      ['Cash on delivery', 'All delivered orders are paid'], [],
       ['Order creation cohort: current status', 'Count'], ...business.statuses.map(s => [s.status, s.count]), [],
       ['Customers with usable phone numbers', business.buyers.length], ['Repeat buyers by period end', business.repeatBuyers], ['Excluded deliveries: no usable phone', business.missingPhones], [],
       ['Inventory snapshot at export', new Date().toISOString()], ['Product', 'Available stock now', 'Units used last 30 days', 'Estimated days cover', 'Current cost value DH'],
@@ -80,48 +95,39 @@ export function AnalysisPage({ orders, products, employees, batches, dataState =
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `tanger-analysis-${range?.start ?? 'all'}-${range?.end ?? 'time'}.csv`; anchor.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000); setExported('Report downloaded. Includes all products in the selected period.')
   }
-  const costs = [['Product cost', totals.productCost], ['Delivery', totals.deliveryCost], ['Confirmation bonuses', totals.confirmationCost], ['Other order expenses', totals.otherCost]] as const
+  const costs = [['Product cost', totals.productCost], ['Delivery', totals.deliveryCost], ['Other order costs', totals.otherCost + totals.confirmationCost]] as const
+  const rowButton = (p: { id: string; name: string }) => <button id={`product-row-${p.id}`} className="product-history-link" aria-expanded={productId === p.id} aria-controls={productId === p.id ? 'product-history' : undefined} onClick={() => openHistory(p.id)}><bdi>{p.name}</bdi><ArrowUpRight /></button>
   return <div className={`analysis-page-content growth-dashboard report-${page}`}>
-    <div className="growth-toolbar">
-      <div className="quick-range analysis-range" aria-label="Analysis period">{presets.map(item => <button key={item.value} className={preset === item.value ? 'selected' : ''} aria-pressed={preset === item.value} onClick={() => setPreset(item.value)}>{item.label}</button>)}<button className={preset === 'custom' ? 'selected' : ''} aria-pressed={preset === 'custom'} onClick={() => setPreset('custom')}>Custom dates</button></div>
-      <div className="growth-toolbar-actions"><label><input type="checkbox" checked={compare && !!range} disabled={!range} onChange={event => setCompare(event.target.checked)} />Compare previous period</label><button className="growth-export" disabled={dataState !== 'ready'} onClick={exportReport}><DownloadSimple />Export report</button></div>
-      {preset === 'custom' && <form className="analysis-custom" onSubmit={event => { event.preventDefault(); if (draft.start && draft.end && draft.start <= draft.end) setCustom(draft) }}><label>From<input type="date" required value={draft.start} max={draft.end} onChange={event => setDraft({ ...draft, start: event.target.value })} /></label><label>To<input type="date" required min={draft.start} value={draft.end} onChange={event => setDraft({ ...draft, end: event.target.value })} /></label><button type="submit">Apply dates</button></form>}
-      <div className="growth-period"><strong>{range ? rangeLabel(range) : 'All recorded activity'}</strong><span>{comparisonRange ? `vs ${rangeLabel(comparisonRange)}` : 'No period comparison'} · DH · Casablanca time</span></div>
-      <span className="sr-only" role="status">{exported}</span>
+    <header className="report-header"><div><h1>Analysis</h1><p>Your business at a glance.</p></div><div className="report-header-actions"><button className="report-date" onClick={() => { setDateOpen(!dateOpen); setDraft(range ?? custom) }} aria-expanded={dateOpen}><CalendarBlank /><span>{range ? rangeLabel(range) : 'All recorded activity'}</span><CaretDown /></button>{menu}</div></header>
+    <div className="report-navigation">
+      <nav className="growth-jumps" aria-label="Analytics sections">{reportPages.map(([value, label]) => <a key={value} href={`#analysis/${value}`} aria-current={page === value ? 'page' : undefined} onClick={event => { if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); navigate(value) } }}>{label}</a>)}</nav>
+      <div className="growth-toolbar"><div className="growth-segments analysis-range" aria-label="Analysis period">{presets.map(item => <button key={item.value} aria-pressed={preset === item.value} onClick={() => { setPreset(item.value); setDateOpen(false) }}>{item.label}</button>)}<button aria-pressed={preset === 'custom'} onClick={() => { setDateOpen(!dateOpen); setDraft(range ?? custom) }}>Custom dates</button></div><label className="compare-control"><input type="checkbox" checked={compare && !!range} disabled={!range} onChange={event => setCompare(event.target.checked)} />Compare previous period</label></div>
     </div>
-    {dataState !== 'ready' && <p className="growth-data-status" role="status">{dataState === 'error' ? 'Some records could not refresh. These figures may be incomplete or out of date. Use Retry to load the full report.' : 'Loading workspace history. Figures may change as records arrive.'} Export will be available after all records load.</p>}
-    <nav className="growth-jumps" aria-label="Analytics sections">{reportPages.map(([value, label]) => <a key={value} href={`#analysis/${value}`} aria-current={page === value ? 'page' : undefined} onClick={event => { if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); navigate(value) } }}>{label}</a>)}</nav>
+    {dateOpen && <form className="analysis-custom" onSubmit={event => { event.preventDefault(); if (draft.start && draft.end && draft.start <= draft.end) { setCustom(draft); setPreset('custom'); setDateOpen(false) } }}><label>From<input type="date" required value={draft.start} max={draft.end} onChange={event => setDraft({ ...draft, start: event.target.value })} /></label><label>To<input type="date" required min={draft.start} value={draft.end} onChange={event => setDraft({ ...draft, end: event.target.value })} /></label><button type="submit">Apply dates</button><button type="button" onClick={() => setDateOpen(false)}>Cancel</button></form>}
+    {dataState !== 'ready' && <p className="growth-data-status" role="status">{dataState === 'error' ? 'Some records could not refresh. These figures may be incomplete. Use Retry to load the full report.' : 'Loading workspace history. Figures may change as records arrive.'} Export is available when all records load.</p>}
+    {(page === 'overview' || page === 'products') && <section className={`growth-kpis ${page === 'products' ? 'product-kpis' : ''}`} aria-label="Key performance indicators">
+      <Metric label="Delivered revenue" value={money(totals.revenue)} current={totals.revenue} previous={page === 'overview' ? previous?.totals.revenue : undefined} />
+      <Metric label="Order profit" value={money(totals.profit)} current={totals.profit} previous={page === 'overview' ? previous?.totals.profit : undefined} />
+      {page === 'overview' && <Metric label="Delivered orders" value={String(totals.orders)} current={totals.orders} previous={previous?.totals.orders} />}
+      <Metric label="Margin" value={`${totals.margin.toFixed(1)}%`} current={totals.margin} previous={page === 'overview' && previous?.totals.orders ? previous.totals.margin : undefined} margin />
+    </section>}
     {page === 'overview' && <>
-    <section className="growth-kpis" aria-label="Key performance indicators">
-      <Metric label="Order profit" value={money(totals.profit)} detail={`${totals.margin.toFixed(1)}% after recorded costs`} current={totals.profit} previous={previous?.totals.profit} accent />
-      <Metric label="Delivered revenue" value={money(totals.revenue)} detail={`${money(totals.totalCost)} in recorded costs`} current={totals.revenue} previous={previous?.totals.revenue} />
-      <Metric label="Delivered orders" value={String(totals.orders)} detail={`${totals.units} units · ${totals.orders ? (totals.units / totals.orders).toFixed(1) : '0'} units / order`} current={totals.orders} previous={previous?.totals.orders} />
-      <Metric label="Average order value" value={money(totals.averageOrder)} detail={`${money(totals.orders ? totals.profit / totals.orders : 0)} profit / order`} current={totals.averageOrder} previous={previous?.totals.averageOrder} />
-    </section>
-    <TrendChart key={`${range?.start}-${range?.end}`} analysis={analysis} previous={previous} range={range} previousRange={comparisonRange} />
-    <section className="analysis-section growth-costs">
-      <header><div><span>02 / Unit economics</span><h2>Revenue to profit</h2></div></header>
-      <div className="growth-ledger-line"><span>Delivered revenue</span><strong>{money(totals.revenue)}</strong></div>
-      {costs.map(([label, cost], index) => <div className="growth-cost-row" key={label}><div><span>{label}</span><strong>− {money(cost)}</strong></div><div className="cost-track"><i className={`cost-${index}`} style={{ width: `${totals.revenue > 0 ? Math.min(100, cost / totals.revenue * 100) : 0}%` }} /></div></div>)}
-      <div className="growth-ledger-line ledger-result"><span>Order profit</span><strong className={totals.profit < 0 ? 'growth-negative' : ''}>{money(totals.profit)}</strong></div>
-      <p className="growth-note">Delivery: {money(totals.orders ? totals.deliveryCost / totals.orders : 0)} / order · {percent(totals.deliveryCost, totals.revenue)} of revenue. Excludes unrecorded business expenses.</p>
-    </section>
+      <div className="overview-primary"><TrendChart key={`${range?.start}-${range?.end}`} analysis={analysis} previous={previous} range={range} previousRange={comparisonRange} />
+      <section className="analysis-section growth-costs"><header><h2>Revenue to profit</h2></header><div className="cost-table" role="table" aria-label="Revenue to profit"><div className="cost-heading" role="row"><span role="columnheader">Item</span><span role="columnheader">Amount (DH)</span><span role="columnheader">Share</span><span /></div>{[['Delivered revenue', totals.revenue], ...costs, ['Order profit', totals.profit]].map(([label, raw], index) => { const value = Number(raw); return <div className={`cost-line ${index === 4 ? 'ledger-result' : ''}`} role="row" key={label}><span role="cell">{label}</span><strong role="cell">{index > 0 && index < 4 ? '−' : ''}{amount(value)}</strong><span role="cell">{percent(value, totals.revenue)}</span><progress aria-label={`${label} share`} max="100" value={totals.revenue ? Math.max(0, Math.min(100, value / totals.revenue * 100)) : 0} /></div> })}</div></section></div>
+      <div className="overview-secondary"><section className="analysis-section leading-products"><header><h2>Leading products</h2><button className="report-link" onClick={() => navigate('products')}>View products <ArrowUpRight /></button></header><div className="growth-table-scroll"><table className="growth-table compact-table"><thead><tr><th>Product</th><th>Units</th><th>Revenue (DH)</th><th>Profit (DH)</th></tr></thead><tbody>{analysis.products.slice(0, 3).map(p => <tr key={p.id}><th scope="row">{rowButton(p)}</th><td>{p.units}</td><td>{amount(p.revenue)}</td><td>{amount(p.profit)}</td></tr>)}</tbody></table></div>{!analysis.products.length && <p className="analysis-empty">No delivered products in this period.</p>}</section><BusinessPanels page="overview" business={business} analysis={analysis} onProduct={openHistory} /></div>
+      <details className="report-more"><summary>Sales rhythm &amp; operations</summary><div className="operations-detail"><div><h3>Profit by weekday</h3><div className="weekday-grid">{[1,2,3,4,5,6,0].map(day => { const point = analysis.weekdays.find(p => p.key === String(day)); return <div key={day}><span>{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][day]}</span><strong>{money(point?.profit ?? 0)}</strong><small>{point?.orders ?? 0} orders</small></div> })}</div></div><div><h3>Operations</h3><p>Average delivery: {business.averageDeliveryDays?.toFixed(1) ?? '—'} days</p><p>Open now: {business.pipeline} orders · {money(business.pipelineValue)}</p><p>{business.aging} orders waiting 7+ days</p><p>Best day: {analysis.bestDay?.key ?? '—'} · {money(analysis.bestDay?.profit ?? 0)}</p><p>Best month: {analysis.bestMonth?.label ?? '—'} · {money(analysis.bestMonth?.profit ?? 0)}</p></div></div></details>
     </>}
-    {page === 'products' && <section className="analysis-section growth-products" id="product-performance">
-      <header><div><span>03 / Product performance</span><h2>Know what earns its place</h2></div><label className="growth-search"><span className="sr-only">Search product performance</span><input type="search" placeholder="Find a product…" value={search} onChange={event => setSearch(event.target.value)} /></label></header>
-      <div className="growth-table-scroll" tabIndex={0} role="region" aria-label="Product performance table, scroll horizontally on small screens"><table className="growth-table"><thead><tr>{([['name', 'Product'], ['units', 'Units'], ['orders', 'Orders'], ['revenue', 'Revenue'], ['cost', 'Cost'], ['profit', 'Order profit'], ['margin', 'Margin']] as [SortKey, string][]).map(([key, label]) => <th key={key} scope="col" aria-sort={sort.key === key ? sort.ascending ? 'ascending' : 'descending' : 'none'}><button onClick={() => setSort({ key, ascending: sort.key === key ? !sort.ascending : key === 'name' })}>{label}{sort.key === key ? sort.ascending ? <ArrowUp /> : <ArrowDown /> : null}</button></th>)}<th scope="col">Revenue share</th></tr></thead><tbody>{ranked.map(p => <tr key={p.id}><th scope="row"><button className="product-history-link" onClick={() => openHistory(p.id)}>{p.name}<ArrowUpRight /></button></th><td>{p.units}</td><td>{p.orders}</td><td>{money(p.revenue)}</td><td>{money(p.cost)}</td><td className={p.profit < 0 ? 'growth-negative' : 'profit-cell'}>{money(p.profit)}</td><td>{p.margin.toFixed(1)}%</td><td><div className="share-cell"><i style={{ width: percent(p.revenue, totals.revenue) }} /><span>{percent(p.revenue, totals.revenue)}</span></div></td></tr>)}</tbody><tfoot><tr><th scope="row">{search ? 'Matching products' : 'Period total'}</th><td>{ranked.reduce((sum, p) => sum + p.units, 0)}</td><td>—</td><td>{money(ranked.reduce((sum, p) => sum + p.revenue, 0))}</td><td>{money(ranked.reduce((sum, p) => sum + p.cost, 0))}</td><td>{money(ranked.reduce((sum, p) => sum + p.profit, 0))}</td><td colSpan={2}>{ranked.length} products</td></tr></tfoot></table></div>
-      {!ranked.length && <p className="analysis-empty">{search ? 'No products match your search.' : 'No delivered products in this period.'}</p>}
-      <p className="growth-note">Click a product for its full history. Shared costs are allocated by revenue, or units for zero-value orders. Product order counts are not additive.</p>
-    </section>}
-    <BusinessPanels page={page} business={business} analysis={analysis} onProduct={openHistory} />
-    {page === 'products' && <section className="analysis-section product-history growth-history" id="product-history">
-      <header><div><span>09 / Product drill-down</span><h2>Every sale. Every restock.</h2></div></header>
-      <div className="history-controls"><label>Find a product<input type="search" placeholder="Search products" value={historySearch} onChange={event => setHistorySearch(event.target.value)} /></label><label>Product<select id="history-product" aria-label="Product history" value={productId} onChange={event => setProductId(event.target.value)}><option value="">Choose a product</option>{choices.filter(([id, name]) => id === productId || name.toLowerCase().includes(historySearch.toLowerCase())).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label></div>
-      <label className="history-scope"><input type="checkbox" checked={historyAll} onChange={event => setHistoryAll(event.target.checked)} />Full history (all dates)</label>
-      <p className="growth-note">{historyAll ? 'All recorded dates' : range ? rangeLabel(range) : 'All recorded dates'} · Sales use delivery date; stock uses receipt date. Bundle component consumption is included in inventory demand, not as separate sale events here.</p>
-      {productId && <div className="history-events">{history.map(entry => <article key={entry.id}><div><strong>{entry.label}</strong><small>{new Date(entry.date).toLocaleDateString('en-GB', { timeZone: 'Africa/Casablanca' })} · {entry.detail}</small></div><div><strong>{entry.quantity} units · {decimalMoney(entry.amount)}</strong><small>{entry.profit === undefined ? entry.id.startsWith('batch-') ? 'Stock cost' : 'Order value' : `${decimalMoney(entry.profit)} order profit`}</small></div></article>)}</div>}
-      <p className="analysis-empty">{!productId ? 'Choose a product above or click one in a report to explore its sales and stock receipts.' : !history.length ? 'No recorded activity for this product in these dates.' : `${history.length} recorded events. Sale profit includes allocated delivery, bonus, and other costs.`}</p>
-    </section>}
+    {page === 'products' && <div className={`product-workspace ${productId ? 'has-detail' : ''}`}><section className="analysis-section growth-products" id="product-performance">
+      <header><h2>Products</h2><label className="growth-search"><MagnifyingGlass /><input aria-label="Search product performance" type="search" placeholder="Search products…" value={search} onChange={event => setSearch(event.target.value)} /></label></header>
+      <div className="growth-table-scroll"><table className="growth-table product-table"><thead><tr>{([['name', 'Product'], ['units', 'Units'], ...(!productId ? [['orders','Orders']] : []), ['revenue', 'Revenue (DH)'], ...(!productId ? [['cost','Cost (DH)']] : []), ['profit', 'Profit (DH)'], ['margin', 'Margin']] as [SortKey, string][]).map(([key,label]) => <th key={key} scope="col" aria-sort={sort.key === key ? sort.ascending ? 'ascending' : 'descending' : 'none'}><button onClick={() => setSort({key, ascending: sort.key === key ? !sort.ascending : key === 'name'})}>{label}{sort.key === key && (sort.ascending ? <ArrowUp /> : <ArrowDown />)}</button></th>)}{!productId && <th>Share</th>}</tr></thead><tbody>{ranked.map(p => <tr key={p.id} className={productId === p.id ? 'selected' : ''}><th scope="row">{rowButton(p)}</th><td>{p.units}</td>{!productId && <td>{p.orders}</td>}<td>{amount(p.revenue)}</td>{!productId && <td>{amount(p.cost)}</td>}<td className={p.profit < 0 ? 'growth-negative' : 'profit-cell'}>{amount(p.profit)}</td><td>{p.margin.toFixed(1)}%</td>{!productId && <td>{percent(p.revenue,totals.revenue)}</td>}</tr>)}</tbody></table></div>
+      {!ranked.length && <p className="analysis-empty">{search ? 'No products match your search.' : 'No delivered products in this period.'}</p>}<p className="growth-note">{ranked.length} products · Click a product to open its history. Click again to close.</p>
+      <section className="profit-contribution"><h3>Profit contribution · Top 3 products</h3>{analysis.products.slice(0,3).map(p => <div key={p.id}><span><bdi>{p.name}</bdi></span><progress max={Math.max(1,...analysis.products.map(p => Math.abs(p.profit)))} value={Math.abs(p.profit)} /><strong className={p.profit < 0 ? 'growth-negative' : ''}>{money(p.profit)}</strong></div>)}</section>
+      <label className="history-picker">Explore any product<select aria-label="Choose any product history" value={productId} onChange={event => setProductId(event.target.value)}><option value="">Choose a product</option>{choices.map(([id,name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+    </section>
+    {productId && <aside className="analysis-section growth-history" id="product-history" aria-label="Product history" onKeyDown={event => { if (event.key === 'Escape') closeHistory() }}><header><div><h2><bdi>{selectedName}</bdi></h2><p>Product history</p></div><button className="detail-close" onClick={closeHistory} aria-label="Close product history"><X /></button></header><div className="detail-stats"><div><strong>{selectedProduct?.orders ?? 0}</strong><span>Orders</span></div><div><strong>{money(selectedProduct?.cost ?? 0)}</strong><span>Cost</span></div><div><strong>{percent(selectedProduct?.revenue ?? 0,totals.revenue)}</strong><span>Revenue share</span></div><div><strong>{selectedProduct?.units ?? 0}</strong><span>Units sold</span></div></div><p className="sr-only">Figures for the selected report period.</p><ProductSalesChart history={history} /><h3>Sales and restocks</h3><div className="growth-segments">{(['all','sales','restocks'] as const).map(value => <button key={value} aria-pressed={activity === value} onClick={() => setActivity(value)}>{value === 'all' ? 'All activity' : value === 'sales' ? 'Sales' : 'Restocks'}</button>)}</div><label className="history-scope"><input type="checkbox" checked={historyAll} onChange={event => setHistoryAll(event.target.checked)} />Full history (all dates)</label><div className="history-events">{events.map(entry => <article key={entry.id}><time>{new Date(entry.date).toLocaleDateString('en-GB',{timeZone:'Africa/Casablanca',day:'numeric',month:'short',year:'numeric'})}</time><div><strong>{entry.label}</strong><span>{entry.quantity} units · {decimalMoney(entry.amount)}</span><small>{entry.detail}{entry.profit !== undefined ? ` · ${decimalMoney(entry.profit)} profit` : ''}</small></div></article>)}</div>{!events.length && <p className="analysis-empty">No activity matches these filters.</p>}<p className="growth-note">{events.length} events. Sale profit includes allocated delivery, bonuses and other costs.</p></aside>}
+    </div>}
+    {(page === 'customers' || page === 'inventory') && <BusinessPanels key={page} page={page} business={business} analysis={analysis} onProduct={openHistory} />}
     {page === 'about' && <section className="growth-definitions" id="report-definitions"><h2>About these numbers & what to track next</h2><div className="definitions-grid"><div><h3>How this report is calculated</h3><p>Revenue and order profit include delivered orders only, grouped by delivery date in Casablanca time. Order profit subtracts product cost, delivery, confirmation bonuses, and other recorded order expenses. It is not accounting net profit.</p><p>Comparisons use the immediately preceding range with the same number of calendar days, including zero-sales days. Today may still be in progress. “All time” has no prior comparison.</p><p>Delivery outcomes follow orders created in the selected period and their current status, not historical status transitions. Customer identity is inferred from phone numbers, so shared or changed numbers affect repeat-buyer results.</p></div><div><h3>Data quality in this period</h3><ul><li>{business.missingDeliveryDates} deliveries use creation date because delivery time is missing.</li><li>{business.estimatedCostOrders} delivered orders have at least one product cost estimated from the current catalog.</li><li>{business.missingPhones} deliveries have no usable phone number for customer analysis.</li></ul><p>Figures reflect the workspace records currently loaded. Stock values are estimates at current catalog cost. Restocks are purchase activity, not an additional sale expense.</p></div><div><h3>Next data to collect for growth</h3><p><b>Acquisition:</b> order source, campaign, and advertising spend → acquisition cost and return on ad spend.</p><p><b>True net profit:</b> overhead, payment fees, tax, refunds, returns, and failed-delivery costs.</p><p><b>Conversion & planning:</b> website visits, checkout events, structured delivery zones, supplier lead times, and payment dates.</p><p>These are not measured by the current order records.</p></div></div></section>}
+    <footer className="report-footer"><p>Order profit includes recorded order costs; overhead is not included.</p><button className="report-link" disabled={dataState !== 'ready'} onClick={exportReport}><DownloadSimple />Export report</button><span className="sr-only" role="status">{exported}</span></footer>
   </div>
 }

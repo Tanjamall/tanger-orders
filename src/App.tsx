@@ -42,6 +42,7 @@ import {
 } from '@phosphor-icons/react'
 import '@fontsource/dm-mono/400.css'
 import '@fontsource/dm-mono/500.css'
+import '@fontsource/fraunces/400.css'
 import '@fontsource/fraunces/600.css'
 import '@fontsource/fraunces/700.css'
 import '@fontsource/manrope/400.css'
@@ -918,7 +919,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   if (supabase && session && workspaceStatus === 'error') return <AppBootScreen error={workspaceError} retry={() => void loadCloud()} />
   if (supabase && session && workspaceStatus === 'missing') return <WorkspaceScreen onReady={loadCloud} />
 
-  return <main className={`app-shell ${dark ? 'theme-dark' : 'theme-light'}`}>
+  return <main className={`app-shell ${tab === 'analysis' ? 'analytics-shell' : ''} ${dark ? 'theme-dark' : 'theme-light'}`}>
     <DesktopSidebar tab={tab} setTab={setTab} displayName={displayName} />
     {notice && <div className="notice-toast" role="status" aria-live="polite">{notice}</div>}
     {(failedPendingOrders.length > 0 || savingPendingOrders.length > 0 || failedResources.length > 0 || resourcesLoading) && <div className={`sync-banner ${failedPendingOrders.length || failedResources.length ? 'has-error' : ''}`} role="status" aria-live="polite">{failedPendingOrders.length > 0 ? <><WarningCircle weight="fill" /><span><b>{failedPendingOrders.length} order{failedPendingOrders.length === 1 ? '' : 's'} waiting to sync</b><small>Your order is safe on this device.</small></span><button onClick={() => failedPendingOrders.forEach((entry) => void syncPendingOrder(entry))}>Retry</button></> : failedResources.length > 0 ? <><WarningCircle weight="fill" /><span><b>Some data could not refresh</b><small>Showing the last saved information.</small></span><button onClick={() => void refreshWorkspaceData()}>Retry</button></> : savingPendingOrders.length > 0 ? <><ArrowsClockwise className="sync-spinner" /><span><b>Saving {savingPendingOrders.length === 1 ? 'order' : `${savingPendingOrders.length} orders`}…</b><small>You can keep working.</small></span></> : <><ArrowsClockwise className="sync-spinner" /><span><b>Refreshing shared data…</b><small>Available screens remain usable.</small></span></>}</div>}
@@ -956,8 +957,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     </section>}
 
     {tab === 'analysis' && <section className="page analysis-page">
-      <PageHeader title="Analysis" subtitle="A clearer view of your business. A better plan for what’s next." actions={appMenu()} />
-      <AnalysisPage batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} dataState={(['orders', 'products', 'inventory', 'employees'] as ResourceName[]).some(name => resourcePhases[name] === 'error') ? 'error' : (['orders', 'products', 'inventory', 'employees'] as ResourceName[]).every(name => resourcePhases[name] === 'ready') ? 'ready' : 'loading'} />
+      <AnalysisPage menu={appMenu()} batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} dataState={(['orders', 'products', 'inventory', 'employees'] as ResourceName[]).some(name => resourcePhases[name] === 'error') ? 'error' : (['orders', 'products', 'inventory', 'employees'] as ResourceName[]).every(name => resourcePhases[name] === 'ready') ? 'ready' : 'loading'} />
     </section>}
 
 
