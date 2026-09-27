@@ -1,4 +1,5 @@
 import { normalizePhone } from './domain/orders'
+import { readAllPages } from './domain/pagination'
 import { recoverSessionRead } from './supabase'
 import { isExpiredJwt } from './sessionRecovery'
 import { App as NativeApp } from '@capacitor/app'
@@ -208,6 +209,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const initialProductsStorageKey = `tanger-products:${storageOwner}:${cachedWorkspaceId ?? 'unassigned'}`
   const outboxStorageKey = `tanger-order-outbox:${storageOwner}`
   const [tab, setTab] = useState<AppTab>(() => {
+    if (/^#analysis\/(overview|products|customers|inventory|about)$/.test(window.location.hash)) return 'analysis'
     const requested = devDemo ? new URLSearchParams(window.location.search).get('tab') : null
     return requested && ['orders', 'inventory', 'profit', 'analysis', 'employees', 'map', 'settings'].includes(requested) ? requested as AppTab : 'orders'
   })
@@ -441,9 +443,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const client = supabase
     if (!client) return
     await loadResource('products', async () => {
-      const result = await client.from('products').select('*').eq('workspace_id', id).order('created_at')
-      if (result.error) throw result.error
-      setProducts(result.data.map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
+      const rows = await readAllPages((from, to) => client.from('products').select('*', { count: 'exact' }).eq('workspace_id', id).order('id').range(from, to))
+      setProducts(rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
     })
   }
 
@@ -451,9 +452,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const client = supabase
     if (!client) return
     await loadResource('orders', async () => {
-      const result = await client.from('orders').select('*').eq('workspace_id', id).order('created_at', { ascending: false })
-      if (result.error) throw result.error
-      const cloudOrders = result.data.map(orderFromRow)
+      const rows = await readAllPages((from, to) => client.from('orders').select('*', { count: 'exact' }).eq('workspace_id', id).order('id').range(from, to))
+      const cloudOrders = rows.map(orderFromRow).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       const queued = pendingOrdersRef.current.filter((entry) => entry.workspaceId === id).map((entry) => entry.order)
       setOrders([...queued, ...cloudOrders.filter((order) => !queued.some((queuedOrder) => queuedOrder.id === order.id))])
     })
@@ -483,14 +483,13 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const client = supabase
     if (!client) return
     await loadResource('inventory', async () => {
-      const result = await client.from('inventory_batches').select('*').eq('workspace_id', id).in('source', ['opening_balance', 'restock', 'correction']).order('received_at', { ascending: false })
-      if (result.error) throw result.error
-      setInventoryBatches(result.data.map((row: any) => ({ id: row.id, productId: row.product_id, unitCost: Number(row.unit_cost), originalQuantity: row.original_quantity, remainingQuantity: row.remaining_quantity, receivedAt: row.received_at, source: row.source })))
+      const rows = await readAllPages((from, to) => client.from('inventory_batches').select('*', { count: 'exact' }).eq('workspace_id', id).in('source', ['opening_balance', 'restock', 'correction']).order('id').range(from, to))
+      setInventoryBatches(rows.map((row: any) => ({ id: row.id, productId: row.product_id, unitCost: Number(row.unit_cost), originalQuantity: row.original_quantity, remainingQuantity: row.remaining_quantity, receivedAt: row.received_at, source: row.source })))
     })
   }
 
   async function refreshWorkspaceData(id = workspaceId) {
-    if (!id) return
+    if (devDemo || !id) return
     await Promise.all([loadWorkspaceMeta(id), loadProducts(id), loadOrders(id), loadMembers(id), loadEmployees(id), loadInventory(id)])
   }
 
@@ -537,7 +536,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     return () => { window.removeEventListener('focus', refreshWhenVisible); window.removeEventListener('online', refreshWhenVisible); document.removeEventListener('visibilitychange', refreshWhenVisible) }
   }, [workspaceId, workspaceStatus])
   useEffect(() => {
-    if (!supabase || !workspaceId || workspaceStatus !== 'ready') return
+    if (devDemo || !supabase || !workspaceId || workspaceStatus !== 'ready') return
     const client = supabase
     const channel = client.channel(`tanger-orders-${workspaceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `workspace_id=eq.${workspaceId}` }, () => void loadOrders(workspaceId))
@@ -957,8 +956,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     </section>}
 
     {tab === 'analysis' && <section className="page analysis-page">
-      <PageHeader title="Analysis" subtitle="Sales, costs, products, and timing" actions={appMenu()} />
-      <AnalysisPage batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} />
+      <PageHeader title="Analysis" subtitle="A clearer view of your business. A better plan for what’s next." actions={appMenu()} />
+      <AnalysisPage batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} dataState={(['orders', 'products', 'inventory', 'employees'] as ResourceName[]).some(name => resourcePhases[name] === 'error') ? 'error' : (['orders', 'products', 'inventory', 'employees'] as ResourceName[]).every(name => resourcePhases[name] === 'ready') ? 'ready' : 'loading'} />
     </section>}
 
 

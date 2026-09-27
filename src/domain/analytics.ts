@@ -1,4 +1,4 @@
-import { eventDateKey, itemCost, orderActivityDate } from './orders'
+import { eventDateKey, itemCost, orderActivityDate, whatsappNumber, bundleStock, productCost } from './orders'
 import type { ConfirmationEmployee, DateRange } from './orders'
 import type { InventoryBatch, Order, Product } from '../types'
 
@@ -123,14 +123,18 @@ export function buildAnalytics(orders: Order[], products: Product[], employees: 
     addPoint(monthMap, month, day.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }), financials.revenue, financials.profit)
     addPoint(weekdayMap, weekday, weekdayNames[day.getDay()], financials.revenue, financials.profit)
 
+    const countedProducts = new Set<string>()
+    const orderUnits = order.items.reduce((sum, item) => sum + item.quantity, 0)
     for (const item of order.items) {
       const product = products.find((entry) => entry.id === item.productId)
       const revenue = item.quantity * item.unitPrice
       const directCost = itemCost(item, products)
-      const sharedCost = financials.revenue ? (financials.deliveryCost + financials.otherCost + financials.confirmationCost) * (revenue / financials.revenue) : 0
+      const weight = financials.revenue ? revenue / financials.revenue : orderUnits ? item.quantity / orderUnits : 0
+      const sharedCost = (financials.deliveryCost + financials.otherCost + financials.confirmationCost) * weight
       const current = productMap.get(item.productId) ?? { id: item.productId, name: product?.name ?? 'Unknown product', units: 0, orders: 0, revenue: 0, cost: 0, profit: 0, margin: 0 }
       current.units += item.quantity
-      current.orders += 1
+      if (!countedProducts.has(item.productId)) current.orders += 1
+      countedProducts.add(item.productId)
       current.revenue += revenue
       current.cost += directCost + sharedCost
       current.profit += revenue - directCost - sharedCost
@@ -164,12 +168,9 @@ export function buildAnalytics(orders: Order[], products: Product[], employees: 
 
 export function analyticsRange(preset: AnalyticsPreset, now = new Date()): DateRange | null {
   if (preset === 'all') return null
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const start = new Date(end)
-  if (preset === 'month') start.setDate(1)
-  else start.setDate(start.getDate() - (preset === '30d' ? 29 : 89))
-  const key = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-  return { start: key(start), end: key(end) }
+  const end = eventDateKey(now.toISOString())
+  const start = preset === 'month' ? end.slice(0, 7) + '-01' : shiftAnalyticsDate(end, preset === '30d' ? -29 : -89)
+  return { start, end }
 }
 
 export type ProductEvent = { id: string; date: string; label: string; detail: string; quantity: number; amount: number; profit?: number }
@@ -184,7 +185,9 @@ export function productHistory(productId: string, orders: Order[], products: Pro
     const financials = orderFinancials(order, products, employees)
     const revenue = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
     const cost = items.reduce((sum, item) => sum + itemCost(item, products), 0)
-    const shared = financials.revenue ? (financials.deliveryCost + financials.otherCost + financials.confirmationCost) * revenue / financials.revenue : 0
+    const units = order.items.reduce((sum, item) => sum + item.quantity, 0)
+    const weight = financials.revenue ? revenue / financials.revenue : units ? items.reduce((sum, item) => sum + item.quantity, 0) / units : 0
+    const shared = (financials.deliveryCost + financials.otherCost + financials.confirmationCost) * weight
     events.push({ id: `order-${order.id}`, date, label: order.status === 'Delivered' ? 'Sale' : order.status, detail: order.client, quantity: items.reduce((sum, item) => sum + item.quantity, 0), amount: revenue, profit: order.status === 'Delivered' ? revenue - cost - shared : undefined })
   }
   for (const batch of batches) {
@@ -193,4 +196,108 @@ export function productHistory(productId: string, orders: Order[], products: Pro
     events.push({ id: `batch-${batch.id}`, date: batch.receivedAt, label: labels[batch.source], detail: `${batch.unitCost} DH / unit`, quantity: batch.originalQuantity, amount: batch.originalQuantity * batch.unitCost })
   }
   return events.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
+}
+
+// Calendar arithmetic is UTC-based; event dates are already Casablanca date keys.
+const dayNumber = (key: string) => Date.parse(`${key}T00:00:00Z`) / 86400000
+export const shiftAnalyticsDate = (key: string, days: number) => new Date((dayNumber(key) + days) * 86400000).toISOString().slice(0, 10)
+export function previousAnalyticsRange(range: DateRange | null): DateRange | null {
+  if (!range) return null
+  return { start: shiftAnalyticsDate(range.start, -(dayNumber(range.end) - dayNumber(range.start) + 1)), end: shiftAnalyticsDate(range.start, -1) }
+}
+
+export function analyticsChange(current: number, previous: number): string {
+  if (previous === 0) return current === 0 ? 'No change' : 'No baseline'
+  const change = (current - previous) / Math.abs(previous) * 100
+  return `${change > 0 ? '+' : ''}${change.toFixed(1)}%`
+}
+
+export function calendarSeries(points: PeriodPoint[], range: DateRange | null, grouping: 'days' | 'months'): PeriodPoint[] {
+  const start = range?.start ?? (points[0]?.key.length === 7 ? points[0].key + '-01' : points[0]?.key)
+  const last = points.at(-1)?.key
+  const end = range?.end ?? (last?.length === 7 ? last + '-31' : last)
+  if (!start || !end) return []
+  const byKey = new Map(points.map(point => [point.key, point]))
+  const result: PeriodPoint[] = []
+  let key = grouping === 'months' ? start.slice(0, 7) + '-01' : start
+  while (key <= end) {
+    const id = grouping === 'months' ? key.slice(0, 7) : key
+    const date = localDate(key)
+    result.push(byKey.get(id) ?? { key: id, label: date.toLocaleDateString('en-GB', grouping === 'months' ? { month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' }), revenue: 0, profit: 0, orders: 0 })
+    if (grouping === 'months') key = new Date(Date.UTC(date.getFullYear(), date.getMonth() + 1, 1)).toISOString().slice(0, 10)
+    else key = shiftAnalyticsDate(key, 1)
+  }
+  return result
+}
+
+export function buildBusinessAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], batches: InventoryBatch[], range: DateRange | null, now = new Date()) {
+  const today = eventDateKey(now.toISOString())
+  const revenueOf = (order: Order) => order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
+  const delivered = orders.filter(order => order.status === 'Delivered' && rangeContains(eventDateKey(orderActivityDate(order)), range))
+  const cohort = orders.filter(order => rangeContains(eventDateKey(order.createdAt), range))
+  const pipeline = orders.filter(order => order.status !== 'Delivered' && order.status !== 'Canceled')
+  const statuses = (['New', 'Confirmed', 'Out for delivery', 'Delivered', 'Canceled'] as const).map(status => ({ status, count: cohort.filter(order => order.status === status).length }))
+  const closed = cohort.filter(order => order.status === 'Delivered' || order.status === 'Canceled')
+  const canceled = closed.filter(order => order.status === 'Canceled').length
+  const elapsed = delivered.filter(order => order.deliveredAt && new Date(order.deliveredAt).getTime() >= new Date(order.createdAt).getTime()).map(order => (new Date(order.deliveredAt!).getTime() - new Date(order.createdAt).getTime()) / 86400000)
+  const phoneKey = (order: Order) => { const value = whatsappNumber(order.phone); return value.length >= 9 && value.length <= 15 ? value : null }
+  const history = new Map<string, number>()
+  for (const order of orders) {
+    if (order.status !== 'Delivered' || eventDateKey(orderActivityDate(order)) > (range?.end ?? today)) continue
+    const key = phoneKey(order)
+    if (key) history.set(key, (history.get(key) ?? 0) + 1)
+  }
+  const customers = new Map<string, { name: string; orders: number; revenue: number; profit: number; repeat: boolean }>()
+  for (const order of delivered) {
+    const key = phoneKey(order)
+    if (!key) continue
+    const row = customers.get(key) ?? { name: order.client, orders: 0, revenue: 0, profit: 0, repeat: (history.get(key) ?? 0) > 1 }
+    row.orders++; row.revenue += revenueOf(order); row.profit += orderFinancials(order, products, employees).profit
+    customers.set(key, row)
+  }
+  const buyers = [...customers.values()].sort((a, b) => b.revenue - a.revenue)
+  const recent = orders.filter(order => order.status === 'Delivered' && rangeContains(eventDateKey(orderActivityDate(order)), { start: shiftAnalyticsDate(today, -29), end: today }))
+  // Demand includes bundle components; stock value never counts the same physical units twice.
+  const demand = new Map<string, number>()
+  function addDemand(id: string, quantity: number, visited = new Set<string>()) {
+    if (visited.has(id)) return
+    const product = products.find(entry => entry.id === id)
+    demand.set(id, (demand.get(id) ?? 0) + quantity)
+    for (const part of product?.components ?? []) addDemand(part.productId, quantity * part.quantity, new Set([...visited, id]))
+  }
+  for (const order of recent) for (const item of order.items) addDemand(item.productId, item.quantity)
+  const inventory = products.map(product => {
+    const stock = bundleStock(product, products)
+    const units = demand.get(product.id) ?? 0
+    return { id: product.id, name: product.name, bundle: !!product.components?.length, stock, units, cover: units ? stock / (units / 30) : null, low: stock <= product.lowStockAt, value: product.components?.length ? 0 : stock * productCost(product, products) }
+  }).sort((a, b) => Number(b.low) - Number(a.low) || (a.cover ?? Infinity) - (b.cover ?? Infinity) || a.name.localeCompare(b.name))
+  const restocks = batches.filter(batch => batch.source === 'restock' && rangeContains(eventDateKey(batch.receivedAt), range))
+  return {
+    statuses, cohortOrders: cohort.length, closedOrders: closed.length, canceled,
+    successRate: closed.length ? (closed.length - canceled) / closed.length * 100 : null,
+    averageDeliveryDays: elapsed.length ? elapsed.reduce((a, b) => a + b, 0) / elapsed.length : null,
+    deliverySamples: elapsed.length,
+    paid: delivered.filter(order => order.paymentStatus === 'Paid').reduce((sum, order) => sum + revenueOf(order), 0),
+    unpaid: delivered.filter(order => order.paymentStatus !== 'Paid').reduce((sum, order) => sum + revenueOf(order), 0),
+    unpaidOrders: delivered.filter(order => order.paymentStatus !== 'Paid').length,
+    pipeline: pipeline.length, pipelineValue: pipeline.reduce((sum, order) => sum + revenueOf(order), 0),
+    aging: pipeline.filter(order => dayNumber(today) - dayNumber(eventDateKey(order.createdAt)) >= 7).length,
+    buyers, repeatBuyers: buyers.filter(buyer => buyer.repeat).length,
+    missingPhones: delivered.filter(order => !phoneKey(order)).length,
+    missingDeliveryDates: delivered.filter(order => !order.deliveredAt).length,
+    estimatedCostOrders: delivered.filter(order => order.items.some(item => typeof item.costTotal !== 'number')).length,
+    inventory, stockValue: inventory.reduce((sum, product) => sum + product.value, 0),
+    lowStock: inventory.filter(product => product.low).length,
+    idleStock: inventory.filter(product => !product.bundle && product.stock > 0 && product.units === 0).length,
+    restockSpend: restocks.reduce((sum, batch) => sum + batch.originalQuantity * batch.unitCost, 0),
+    restockUnits: restocks.reduce((sum, batch) => sum + batch.originalQuantity, 0),
+  }
+}
+
+export function analyticsCsv(rows: (string | number)[][]) {
+  return '\uFEFF' + rows.map(row => row.map(value => {
+    // Keep spreadsheet programs from evaluating user-controlled names as formulas.
+    const text = typeof value === 'string' && /^[\s]*[=+@-]/.test(value) ? "'" + value : String(value)
+    return '"' + text.replaceAll('"', '""') + '"'
+  }).join(',')).join('\r\n')
 }
