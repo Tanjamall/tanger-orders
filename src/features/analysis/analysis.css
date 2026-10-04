@@ -110,18 +110,6 @@
 .growth-dashboard :focus-visible { outline:2px solid var(--pine); outline-offset:3px; }
 @media(min-width:1100px) {
   .ledger-content > .page.analysis-page { width:100%; max-width:none; margin:0; padding:22px 32px 40px; }
-  .analytics-shell { --desktop-nav-collapsed:94px; }
-  .analytics-shell .desktop-sidebar,.analytics-shell .desktop-sidebar:is(:hover,:focus-within) { width:94px; background:#005442; border:0; padding:20px 8px; box-shadow:none; }
-  .analytics-shell .desktop-sidebar header { padding:0 16px 35px; }
-  .analytics-shell .desktop-brand-mark,.analytics-shell .desktop-sidebar:is(:hover,:focus-within) .desktop-brand-mark { width:44px; flex-basis:44px; opacity:1; transform:none; }
-  .analytics-shell .desktop-brand-copy { display:none; }
-  .analytics-shell .desktop-sidebar nav { gap:8px; }
-  .analytics-shell .desktop-sidebar nav button,.analytics-shell .desktop-sidebar:is(:hover,:focus-within) nav button { display:flex; flex-direction:column; justify-content:center; gap:7px; padding:12px 0; min-height:86px; border-radius:7px; color:#f5f1e8; font-size:13px; font-weight:400; }
-  .analytics-shell .desktop-sidebar nav button > span,.analytics-shell .desktop-sidebar:is(:hover,:focus-within) nav button > span { max-width:100%; opacity:1; }
-  .analytics-shell .desktop-sidebar nav button svg { width:27px; height:27px; flex-basis:27px; }
-  .analytics-shell .desktop-sidebar nav button.active,.analytics-shell .desktop-sidebar nav button:hover { background:#ffffff18; color:#fffdf8; }
-  .analytics-shell .desktop-sidebar ~ .ledger-scroll,.analytics-shell .desktop-sidebar:is(:hover,:focus-within) ~ .ledger-scroll { left:94px; }
-  .analytics-shell .desktop-sidebar-account { display:none; }
 }
 @media(min-width:1100px) and (max-width:1599px) {
   .report-navigation { gap:12px; }.growth-jumps { gap:20px; }.growth-toolbar { gap:12px; }.growth-segments.analysis-range button { padding:8px 10px; font-size:13px; }.compare-control { font-size:12px; }
@@ -153,7 +141,6 @@
   .growth-table { font-size:16px; }
   .growth-jumps a { font-size:16px; }
   .growth-trend .chart-note { margin-top:4px; }
-  .analytics-shell .desktop-sidebar nav button.active svg { fill:currentColor; }
 }
 .growth-history .product-sales-chart { margin-top:18px; }
 .growth-history .product-sales-chart .growth-chart { max-height:165px; }
