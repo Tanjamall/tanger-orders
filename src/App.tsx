@@ -1,4 +1,5 @@
 import { normalizePhone } from './domain/orders'
+import { DailyDeliveryModal } from './features/orders/DailyDeliveryModal'
 import { readAllPages } from './domain/pagination'
 import { recoverSessionRead } from './supabase'
 import { isExpiredJwt } from './sessionRecovery'
@@ -72,6 +73,7 @@ import {
   itemCost,
   longDate,
   money,
+  preciseMoney,
   monthEndKey,
   monthLabel,
   monthStartKey,
@@ -106,17 +108,17 @@ import {
   listenForPushNotificationOrders,
   type PushNotificationState,
 } from './pushNotifications'
-import type { InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
+import type { DailyDeliveryCost, InventoryBatch, Order, PaymentStatus, Product, Status } from './types'
 
 type WorkspaceStatus = 'checking' | 'ready' | 'missing' | 'error'
-type ResourceName = 'workspace' | 'orders' | 'products' | 'members' | 'employees' | 'inventory'
+type ResourceName = 'workspace' | 'orders' | 'products' | 'members' | 'employees' | 'inventory' | 'dailyDelivery'
 type ResourcePhase = 'idle' | 'loading' | 'ready' | 'error'
 type PendingOrder = { workspaceId: string; order: Order; status: 'saving' | 'failed'; lastError?: string }
 
 const DeliveryMap = lazy(() => import('./features/map/DeliveryMap'))
 
 const emptyResourcePhases: Record<ResourceName, ResourcePhase> = {
-  workspace: 'idle', orders: 'idle', products: 'idle', members: 'idle', employees: 'idle', inventory: 'idle',
+  workspace: 'idle', orders: 'idle', products: 'idle', members: 'idle', employees: 'idle', inventory: 'idle', dailyDelivery: 'idle',
 }
 
 function readStored<T>(key: string, fallback: T): T {
@@ -225,6 +227,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   })
   const [products, setProducts] = useState<Product[]>(() => devDemo ? initialProducts : readStored<Product[]>(initialProductsStorageKey, []))
   const [inventoryBatches, setInventoryBatches] = useState<InventoryBatch[]>(() => devDemo ? openingBatches(initialProducts) : [])
+  const [dailyDeliveryCosts, setDailyDeliveryCosts] = useState<DailyDeliveryCost[]>(() => devDemo ? [] : readStored(`tanger-daily-delivery:${storageOwner}:${cachedWorkspaceId ?? 'unassigned'}`, []))
+  const [showDailyDelivery, setShowDailyDelivery] = useState(false)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<Status | 'All'>('All')
   const [showOrder, setShowOrder] = useState(false)
@@ -242,6 +246,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [notice, setNotice] = useState('')
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => devDemo ? 'demo-workspace' : null)
   const ordersStorageKey = `tanger-orders:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
+  const dailyDeliveryStorageKey = `tanger-daily-delivery:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
   const productsStorageKey = `tanger-products:${storageOwner}:${workspaceId ?? cachedWorkspaceId ?? 'unassigned'}`
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(() => devDemo ? 'ready' : 'checking')
   const [workspaceError, setWorkspaceError] = useState('')
@@ -281,6 +286,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   }, [highlightedPushOrderIds])
 
   nativeBackAction.current = () => {
+    if (showDailyDelivery) { setShowDailyDelivery(false); return true }
     if (editingConfirmationEmployee) { setEditingConfirmationEmployee(null); return true }
     if (showOrderCalendar) { setShowOrderCalendar(false); return true }
     if (editingOrder) { setEditingOrder(null); return true }
@@ -318,6 +324,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     }
   }, [])
 
+  useEffect(() => { if (!devDemo) localStorage.setItem(dailyDeliveryStorageKey, JSON.stringify(dailyDeliveryCosts)) }, [dailyDeliveryCosts, devDemo, dailyDeliveryStorageKey])
   useEffect(() => { pendingOrdersRef.current = pendingOrders; if (!devDemo) localStorage.setItem(outboxStorageKey, JSON.stringify(pendingOrders)) }, [pendingOrders, devDemo, outboxStorageKey])
   useEffect(() => { if (!devDemo) localStorage.setItem(ordersStorageKey, JSON.stringify(orders)) }, [orders, devDemo, ordersStorageKey])
   useEffect(() => { if (!devDemo) localStorage.setItem(productsStorageKey, JSON.stringify(products)) }, [products, devDemo, productsStorageKey])
@@ -480,6 +487,28 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     })
   }
 
+  async function loadDailyDelivery(id: string) {
+    const client = supabase
+    if (!client) return
+    await loadResource('dailyDelivery', async () => {
+      const rows = await readAllPages((from, to) => client.from('daily_delivery_costs').select('cost_date, amount', { count: 'exact' }).eq('workspace_id', id).order('cost_date').range(from, to))
+      setDailyDeliveryCosts(rows.map(row => ({ date: row.cost_date, amount: Number(row.amount) })))
+    })
+  }
+
+  async function saveDailyDelivery(entry: DailyDeliveryCost) {
+    if (!workspaceId) throw new Error('Open your workspace first.')
+    let saved = entry
+    if (!devDemo) {
+      if (!supabase) throw new Error('Connection unavailable. Please retry.')
+      const result = await supabase.from('daily_delivery_costs').upsert({ workspace_id: workspaceId, cost_date: entry.date, amount: entry.amount }, { onConflict: 'workspace_id,cost_date' }).select('cost_date, amount').single()
+      if (result.error) throw new Error(result.error.message)
+      saved = { date: result.data.cost_date, amount: Number(result.data.amount) }
+    }
+    setDailyDeliveryCosts(current => [...current.filter(item => item.date !== saved.date), saved])
+    setNotice('Daily delivery cost saved.')
+  }
+
   async function loadInventory(id: string) {
     const client = supabase
     if (!client) return
@@ -491,7 +520,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
   async function refreshWorkspaceData(id = workspaceId) {
     if (devDemo || !id) return
-    await Promise.all([loadWorkspaceMeta(id), loadProducts(id), loadOrders(id), loadMembers(id), loadEmployees(id), loadInventory(id)])
+    await Promise.all([loadWorkspaceMeta(id), loadProducts(id), loadOrders(id), loadMembers(id), loadEmployees(id), loadInventory(id), loadDailyDelivery(id)])
   }
 
   async function loadCloud() {
@@ -515,13 +544,13 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (!profile.workspace_id) {
       localStorage.removeItem(workspaceHintKey)
       setWorkspaceId(null)
-      setOrders([]); setProducts([]); setInventoryBatches([]); setMembers([]); setConfirmationEmployees([])
+      setOrders([]); setProducts([]); setInventoryBatches([]); setDailyDeliveryCosts([]); setShowDailyDelivery(false); setMembers([]); setConfirmationEmployees([])
       setWorkspaceStatus('missing')
       return
     }
     if (profile.workspace_id !== (workspaceId ?? cachedWorkspaceId)) {
       setOrders(pendingOrdersRef.current.filter((entry) => entry.workspaceId === profile.workspace_id).map((entry) => entry.order))
-      setProducts([]); setInventoryBatches([]); setMembers([]); setConfirmationEmployees([])
+      setProducts([]); setInventoryBatches([]); setDailyDeliveryCosts([]); setShowDailyDelivery(false); setMembers([]); setConfirmationEmployees([])
     }
     localStorage.setItem(workspaceHintKey, profile.workspace_id)
     setWorkspaceId(profile.workspace_id)
@@ -541,6 +570,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const client = supabase
     const channel = client.channel(`tanger-orders-${workspaceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `workspace_id=eq.${workspaceId}` }, () => void loadOrders(workspaceId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_delivery_costs', filter: `workspace_id=eq.${workspaceId}` }, () => void loadDailyDelivery(workspaceId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `workspace_id=eq.${workspaceId}` }, () => { void loadProducts(workspaceId); void loadInventory(workspaceId) })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'confirmation_employees', filter: `workspace_id=eq.${workspaceId}` }, () => void loadEmployees(workspaceId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_batches', filter: `workspace_id=eq.${workspaceId}` }, () => void loadInventory(workspaceId))
@@ -569,6 +599,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationBonus = confirmationCost(order)
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs - confirmationBonus, confirmationBonuses: sum.confirmationBonuses + confirmationBonus }
   }, { revenue: 0, profit: 0, confirmationBonuses: 0 }), [profitOrders, products, confirmationEmployees])
+  const profitSharedDelivery = dailyDeliveryCosts.filter(entry => (!profitStart || entry.date >= profitStart) && (!profitEnd || entry.date <= profitEnd)).reduce((sum, entry) => sum + entry.amount, 0)
+  const rangeSharedDelivery = dailyDeliveryCosts.filter(entry => inDateRange(entry.date, orderRange)).reduce((sum, entry) => sum + entry.amount, 0)
   const selectedRangeOrders = ordersForRange(orders, orderRange)
   const selectedRangeDelivered = selectedRangeOrders.filter((order) => order.status === 'Delivered')
   const carryoverOrders = carriedOrders(orders, orderRange)
@@ -579,7 +611,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
     const costs = order.items.reduce((value, item) => value + itemCost(item, products), 0) + order.deliveryCharge + order.otherExpense + confirmationCost(order)
     return sum + revenue - costs
-  }, 0)
+  }, 0) - rangeSharedDelivery
   const employeeSummaries = confirmationEmployees.map((employee) => {
     const confirmations = periodConfirmations.filter((order) => order.confirmationEmployeeId === employee.id)
     const productNames = [...new Set(confirmations.flatMap((order) => order.items.map((item) => products.find((product) => product.id === item.productId)?.name).filter((name): name is string => Boolean(name))))]
@@ -926,7 +958,9 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab !== 'map' && <FeatureBoundary resetKey={tab}><div className="ledger-scroll"><div className="ledger-content">
     {tab === 'orders' && <section className="page quiet-orders mobile-orders-view">
       <PageHeader title="Orders" subtitle={orderRangeTitle} actions={<><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button>{appMenu()}</>} />
-      <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{money(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
+      <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{preciseMoney(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
+      <button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost</button>
+      {rangeSharedDelivery > 0 && <p className="period-caption">Includes {preciseMoney(rangeSharedDelivery)} shared delivery costs for this period.</p>}
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
       <div className="filter-rail" aria-label="Filter orders by status">{orderFilters.map((filter) => {
         const count = [...selectedRangeOrders, ...carryoverOrders].filter((order) => filter.value === 'All' || order.status === filter.value).length
@@ -937,7 +971,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{statusFilter === 'Delivered' ? 'Delivered · ' : ''}{group.date === eventDateKey(new Date().toISOString()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && resourcePhases.orders === 'loading' ? <DataLoading label="Loading orders" /> : !visibleOrders.length && !visibleCarryover.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
-    {tab === 'orders' && <DesktopOrdersView orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
+    {tab === 'orders' && <DesktopOrdersView dailyDeliveryAction={<button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost{rangeSharedDelivery > 0 ? ` · ${preciseMoney(rangeSharedDelivery)} this period` : ''}</button>} orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
@@ -951,13 +985,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="range-control" aria-label="Choose profit date range"><label><span>From</span><div><CalendarBlank /><input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></div></label><i /><label><span>To</span><div><CalendarBlank /><input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></div></label></section>
       <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button className={profitStart === monthStartKey() && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button><button className={profitStart === previousMonthRange().start && profitEnd === previousMonthRange().end ? 'selected' : ''} onClick={() => { const range = previousMonthRange(); setProfitStart(range.start); setProfitEnd(range.end) }}>Last month</button></div>
       <p className="period-caption">{profitStart && profitEnd ? rangeLabel({ start: profitStart, end: profitEnd }) : 'Selected dates'} · By delivery date</p>
-      <section className="net-profit"><span>Net profit</span><strong>{money(profitTotals.profit)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
-      <section className="profit-grid"><Metric icon={<Tag />} label="Sales" value={money(profitTotals.revenue)} /><Metric icon={<ClipboardText />} label="Orders" value={String(profitOrders.length)} /><Metric icon={<UsersThree />} label="Team bonuses" value={money(profitTotals.confirmationBonuses)} /><Metric icon={<ChartBar />} label="Average net" value={money(profitOrders.length ? profitTotals.profit / profitOrders.length : 0)} /></section>
+      <section className="net-profit"><span>Net profit</span><strong>{preciseMoney(profitTotals.profit - profitSharedDelivery)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
+      <p className="period-caption">Shared delivery costs: {preciseMoney(profitSharedDelivery)} · Average per delivered order: {profitOrders.length ? `${(profitSharedDelivery / profitOrders.length).toFixed(2)} DH` : '—'}</p>
+      <section className="profit-grid"><Metric icon={<Tag />} label="Sales" value={money(profitTotals.revenue)} /><Metric icon={<ClipboardText />} label="Orders" value={String(profitOrders.length)} /><Metric icon={<UsersThree />} label="Team bonuses" value={money(profitTotals.confirmationBonuses)} /><Metric icon={<ChartBar />} label="Average net" value={preciseMoney(profitOrders.length ? (profitTotals.profit - profitSharedDelivery) / profitOrders.length : 0)} /></section>
       <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{order.deliveredAt ? `Delivered ${dateStamp(eventDateKey(order.deliveredAt))}` : "Delivery date unavailable"} · Created {dateStamp(eventDateKey(order.createdAt))}</p><span>{order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
     </section>}
 
     {tab === 'analysis' && <section className="page analysis-page">
-      <AnalysisPage menu={appMenu()} batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} dataState={(['orders', 'products', 'inventory', 'employees'] as ResourceName[]).some(name => resourcePhases[name] === 'error') ? 'error' : (['orders', 'products', 'inventory', 'employees'] as ResourceName[]).every(name => resourcePhases[name] === 'ready') ? 'ready' : 'loading'} />
+      <AnalysisPage dailyCosts={dailyDeliveryCosts} menu={appMenu()} batches={inventoryBatches} orders={orders} products={products} employees={confirmationEmployees} dataState={(['orders', 'products', 'inventory', 'employees', 'dailyDelivery'] as ResourceName[]).some(name => resourcePhases[name] === 'error') ? 'error' : (['orders', 'products', 'inventory', 'employees', 'dailyDelivery'] as ResourceName[]).every(name => resourcePhases[name] === 'ready') ? 'ready' : 'loading'} />
     </section>}
 
 
@@ -989,6 +1024,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'inventory' && <button className="ledger-fab inventory-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
+    {showDailyDelivery && <DailyDeliveryModal costs={dailyDeliveryCosts} orders={orders} products={products} employees={confirmationEmployees} ready={['dailyDelivery', 'orders', 'products', 'employees'].every(name => resourcePhases[name as ResourceName] === 'ready')} close={() => setShowDailyDelivery(false)} save={saveDailyDelivery} />}
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
     {showConfirmationTeam && <Modal title="Manage employees" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Choose whether each employee earns a fixed amount per confirmed order or per item quantity. Admin confirmations have no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmed {employee.bonusBasis === 'per_item' ? 'item' : 'order'} · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => { setShowConfirmationTeam(false); setEditingConfirmationEmployee(employee) }}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}

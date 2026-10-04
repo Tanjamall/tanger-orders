@@ -27,6 +27,7 @@ import {
   orderActivityDate,
   longDate,
   money,
+  preciseMoney,
   navigationUrl,
   orderFilters,
   shortDate,
@@ -66,6 +67,7 @@ export function DesktopSidebar({ tab, setTab, displayName }: DesktopSidebarProps
 }
 
 type DesktopOrdersViewProps = {
+  dailyDeliveryAction: ReactNode
   orders: Order[]
   carryoverOrders: Order[]
   carryoverCount: number
@@ -89,7 +91,7 @@ type DesktopOrdersViewProps = {
   onDelete: (order: Order) => void
 }
 
-export function DesktopOrdersView({ orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, menu, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
+export function DesktopOrdersView({ dailyDeliveryAction, orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, menu, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const selectableOrders = [...carryoverOrders, ...orders]
@@ -111,12 +113,13 @@ export function DesktopOrdersView({ orders, carryoverOrders, carryoverCount, ran
     </header>
 
     <section className="desktop-summary" aria-label="Order summary">
-      <div><i><Tag /></i><span>Net profit<small>From {deliveredCount} delivered {deliveredCount === 1 ? 'order' : 'orders'}</small></span><strong>{money(rangeProfit)}</strong></div>
+      <div><i><Tag /></i><span>Net profit<small>From {deliveredCount} delivered {deliveredCount === 1 ? 'order' : 'orders'}</small></span><strong>{preciseMoney(rangeProfit)}</strong></div>
       <div><i><CheckCircle /></i><span>Delivered<small>This period</small></span><strong>{deliveredCount}</strong></div>
       <div><i><Pause /></i><span>Pending<small>Need attention</small></span><strong>{pendingCount}</strong></div>
       <div><i><CalendarBlank /></i><span>As of</span><strong>{rangeLabelText}</strong></div>
     </section>
 
+    {dailyDeliveryAction}
     <div className="desktop-orders-body">
       <section className="desktop-order-list">
         <div className="desktop-filter-row" aria-label="Filter orders by status">{orderFilters.map((filter) => <button key={filter.value} className={statusFilter === filter.value ? 'active' : ''} onClick={() => setStatusFilter(filter.value)}>{filter.label}</button>)}</div>

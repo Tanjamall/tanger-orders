@@ -25,6 +25,36 @@ const orders = [
   { ...base, id: 'o4', client: 'Pending', status: 'Confirmed', createdAt: '2026-09-07T12:00:00Z', items: [{ productId: 'p2', quantity: 1, unitPrice: 100 }], deliveryCharge: 10, otherExpense: 0 },
 ]
 
+test('shared daily delivery is deducted once, without changing product profitability or order counts', () => {
+  const range = { start: '2026-09-01', end: '2026-09-30' }
+  const original = buildAnalytics(orders, products, employees, range)
+  const result = buildAnalytics(orders, products, employees, range, [
+    { date: '2026-09-05', amount: 12.50 },
+    { date: '2026-09-08', amount: 20 },
+    { date: '2026-10-01', amount: 100 },
+  ])
+  assert.equal(result.totals.profit, original.totals.profit - 32.5)
+  assert.equal(result.totals.deliveryCost, original.totals.deliveryCost + 32.5)
+  assert.equal(result.totals.totalCost, original.totals.totalCost + 32.5)
+  assert.equal(result.totals.orders, 2)
+  assert.deepEqual(result.products, original.products)
+  assert.equal(result.days.find(day => day.key === '2026-09-05').profit, 72.5)
+  assert.deepEqual(result.days.find(day => day.key === '2026-09-08'), { key: '2026-09-08', label: new Date('2026-09-08T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' }), revenue: 0, profit: -20, orders: 0 })
+  for (const points of [result.days, result.months, result.weekdays]) {
+    assert.equal(points.reduce((sum, point) => sum + point.profit, 0), result.totals.profit)
+    assert.equal(points.reduce((sum, point) => sum + point.orders, 0), 2)
+  }
+})
+
+test('delivery-only dates and cleared expenses work with no delivered orders', () => {
+  const result = buildAnalytics([], products, [], null, [{ date: '2026-09-30', amount: 120 }])
+  assert.equal(result.totals.profit, -120)
+  assert.equal(result.totals.orders, 0)
+  assert.equal(result.days[0].profit, -120)
+  assert.equal(calendarSeries(result.days, null, 'days')[0].profit, -120)
+  assert.equal(buildAnalytics([], products, [], null, [{ date: '2026-09-30', amount: 0 }]).totals.profit, 0)
+})
+
 test('analysis includes every material cost and uses delivery dates', () => {
   const result = buildAnalytics(orders, products, employees, { start: '2026-09-01', end: '2026-09-30' })
   assert.deepEqual(result.totals, { revenue: 300, productCost: 110, deliveryCost: 30, otherCost: 10, confirmationCost: 5, totalCost: 155, profit: 145, margin: 145 / 3, orders: 2, units: 3, averageOrder: 150 })

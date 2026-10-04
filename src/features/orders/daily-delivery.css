@@ -1,0 +1,11 @@
+.daily-delivery-action { display: flex; align-items: center; gap: 8px; padding: 10px 0; margin: 6px 0 12px; color: var(--accent, #005442); font: inherit; font-weight: 700; background: none; border: 0; text-align: left; cursor: pointer; }
+.daily-delivery-form > p, .daily-delivery-form > small { line-height: 1.6; margin: 0; }
+.daily-delivery-summary { margin: 0; padding: 8px 0; border-block: 1px solid #87998d55; }
+.daily-delivery-summary > div { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; }
+.daily-delivery-summary dt { flex: 1; }
+.daily-delivery-summary dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.daily-delivery-summary > div:last-child { border-top: 1px solid #87998d55; font-weight: 700; }
+.daily-delivery-history { display: grid; max-height: 220px; overflow: auto; }
+.daily-delivery-history button { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border: 0; border-bottom: 1px solid #87998d55; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.daily-delivery-form summary { cursor: pointer; padding: 12px 0; }
+.theme-dark .daily-delivery-action { color: #82cfb6; }

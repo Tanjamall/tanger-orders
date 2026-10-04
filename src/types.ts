@@ -41,3 +41,4 @@ export type Order = {
   confirmedAt?: string
   notes?: string
 }
+export type DailyDeliveryCost = { date: string; amount: number }

@@ -1,6 +1,6 @@
 import { eventDateKey, itemCost, orderActivityDate, whatsappNumber, bundleStock, productCost } from './orders'
 import type { ConfirmationEmployee, DateRange } from './orders'
-import type { InventoryBatch, Order, Product } from '../types'
+import type { DailyDeliveryCost, InventoryBatch, Order, Product } from '../types'
 
 export type AnalyticsPreset = 'month' | '30d' | '90d' | 'all'
 
@@ -89,7 +89,7 @@ function addPoint(map: Map<string, PeriodPoint>, key: string, label: string, rev
   map.set(key, current)
 }
 
-export function buildAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], range: DateRange | null): AnalyticsSnapshot {
+export function buildAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], range: DateRange | null, dailyCosts: DailyDeliveryCost[] = []): AnalyticsSnapshot {
   const relevantOrders = orders.filter((order) => rangeContains(eventDateKey(orderActivityDate(order)), range))
   const delivered = relevantOrders.filter((order) => order.status === 'Delivered')
   const totals = delivered.reduce((sum, order) => {
@@ -142,6 +142,24 @@ export function buildAnalytics(orders: Order[], products: Product[], employees: 
     }
   }
 
+  // Shared delivery is a dated business expense, never allocated to products.
+  for (const expense of dailyCosts.filter(entry => rangeContains(entry.date, range))) {
+    totals.deliveryCost += expense.amount
+    totals.totalCost += expense.amount
+    totals.profit -= expense.amount
+    const day = localDate(expense.date)
+    const points: [Map<string, PeriodPoint>, string, string][] = [
+      [dayMap, expense.date, day.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })],
+      [monthMap, expense.date.slice(0, 7), day.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })],
+      [weekdayMap, String(day.getDay()), weekdayNames[day.getDay()]],
+    ]
+    for (const [map, key, label] of points) {
+      const point = map.get(key) ?? { key, label, revenue: 0, profit: 0, orders: 0 }
+      point.profit -= expense.amount
+      map.set(key, point)
+    }
+  }
+  totals.margin = totals.revenue ? totals.profit / totals.revenue * 100 : 0
   const productsRanked = [...productMap.values()].map((product) => ({ ...product, margin: product.revenue ? (product.profit / product.revenue) * 100 : 0 })).sort((a, b) => b.profit - a.profit)
   const days = [...dayMap.values()].sort((a, b) => a.key.localeCompare(b.key))
   const months = [...monthMap.values()].sort((a, b) => a.key.localeCompare(b.key))
@@ -204,6 +222,16 @@ export const shiftAnalyticsDate = (key: string, days: number) => new Date((dayNu
 export function previousAnalyticsRange(range: DateRange | null): DateRange | null {
   if (!range) return null
   return { start: shiftAnalyticsDate(range.start, -(dayNumber(range.end) - dayNumber(range.start) + 1)), end: shiftAnalyticsDate(range.start, -1) }
+}
+
+export function previousCalendarMonthToDateRange(range: DateRange | null): DateRange | null {
+  if (!range) return null
+  const [year, month, day] = range.end.split('-').map(Number)
+  const previousMonth = new Date(Date.UTC(year, month - 2, 1))
+  const previousMonthEndDay = new Date(Date.UTC(year, month - 1, 0)).getUTCDate()
+  const start = `${previousMonth.getUTCFullYear()}-${String(previousMonth.getUTCMonth() + 1).padStart(2, '0')}-01`
+  const end = `${start.slice(0, 7)}-${String(Math.min(day, previousMonthEndDay)).padStart(2, '0')}`
+  return { start, end }
 }
 
 export function analyticsChange(current: number, previous: number): string {

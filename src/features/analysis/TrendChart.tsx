@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { X } from '@phosphor-icons/react'
 import { calendarSeries, type AnalyticsSnapshot } from '../../domain/analytics'
-import { money, type DateRange } from '../../domain/orders'
+import { preciseMoney as money, type DateRange } from '../../domain/orders'
 
 export function TrendChart({ analysis, previous, range, previousRange }: { analysis: AnalyticsSnapshot; previous: AnalyticsSnapshot | null; range: DateRange | null; previousRange: DateRange | null }) {
   const [metric, setMetric] = useState<'revenue' | 'profit' | 'orders'>('revenue')

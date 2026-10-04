@@ -20,6 +20,7 @@ export const orderFilters: { label: string; value: Status | 'All' }[] = [
 ]
 export const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unpaid']
 
+export const preciseMoney = (value: number) => `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })} DH`
 export const money = (value: number) => `${Math.round(value)} DH`
 export const confirmationBonusFor = (employee: ConfirmationEmployee | undefined, items: Order['items']) => employee
   ? employee.bonus * (employee.bonusBasis === 'per_item' ? items.reduce((sum, item) => sum + item.quantity, 0) : 1)
