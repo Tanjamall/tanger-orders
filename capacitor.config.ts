@@ -5,6 +5,11 @@ const config: CapacitorConfig = {
   appName: 'Tanger Orders',
   webDir: 'dist',
   plugins: {
+    CapacitorUpdater: {
+      autoUpdate: 'atBackground',
+      updateUrl: 'https://tanger-orders.pages.dev/api/app-update',
+      statsUrl: '',
+    },
     PushNotifications: {
       presentationOptions: ['sound', 'alert'],
     },

@@ -482,6 +482,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .map-menu { position: absolute; z-index: 8; top: 42px; right: 18px; }
 .map-menu .square-action { border-color: var(--line); background: color-mix(in srgb, var(--paper-raised) 94%, transparent); backdrop-filter: blur(9px); box-shadow: 0 7px 18px rgb(18 42 34 / 14%); }
 .notice-toast { position: absolute; z-index: 1400; top: calc(14px + env(safe-area-inset-top)); left: 50%; width: min(calc(100% - 32px), 520px); padding: 11px 14px; border: 1px solid color-mix(in srgb, var(--pine) 26%, var(--line)); border-radius: 11px; background: var(--paper-raised); color: var(--ink); box-shadow: 0 12px 30px rgb(18 42 34 / 18%); font-size: 10px; text-align: center; transform: translateX(-50%); }
+.app-update-banner { position: fixed; z-index: 1250; bottom: calc(92px + env(safe-area-inset-bottom)); left: 50%; width: min(440px, calc(100vw - 24px)); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper-raised); box-shadow: 0 12px 34px rgb(15 43 34 / 18%); transform: translateX(-50%); }
+.app-update-banner b, .app-update-banner small { display: block; }
+.app-update-banner b { font-size: 13px; }
+.app-update-banner small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.app-update-banner button, .app-update-settings button { min-height: 38px; padding: 0 13px; border: 0; border-radius: 9px; background: var(--pine); color: white; font-size: 12px; font-weight: 700; cursor: pointer; }
+.app-update-banner button:disabled, .app-update-settings button:disabled { opacity: .6; cursor: wait; }
+.app-update-settings > p { max-width: 60ch; line-height: 1.5; font-size: 12px; }
 
 .delivery-default-setting form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; margin-top: 13px; }
 .delivery-default-setting .primary { min-height: 43px; box-shadow: none; }
