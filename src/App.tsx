@@ -264,8 +264,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [showConfirmationTeam, setShowConfirmationTeam] = useState(false)
   const [editingConfirmationEmployee, setEditingConfirmationEmployee] = useState<ConfirmationEmployee | null>(null)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
-  const [profitStart, setProfitStart] = useState(monthStartKey)
-  const [profitEnd, setProfitEnd] = useState(() => dateKey(new Date()))
+  const [profitRange, setProfitRange] = useState<DateRange>(() => ({ start: monthStartKey(), end: dateKey(new Date()) }))
+  const [showProfitCalendar, setShowProfitCalendar] = useState(false)
   const [employeePeriod, setEmployeePeriod] = useState<'month' | 'last' | 'all'>('month')
   const [pushState, setPushState] = useState<PushNotificationState>('prompt')
   const [pushBusy, setPushBusy] = useState(false)
@@ -593,7 +593,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const delivered = orders.filter((order) => order.status === 'Delivered')
   const profitOrders = delivered.filter((order) => {
     const orderDate = eventDateKey(orderActivityDate(order))
-    return (!profitStart || orderDate >= profitStart) && (!profitEnd || orderDate <= profitEnd)
+    return inDateRange(orderDate, profitRange)
   }).sort((a, b) => new Date(orderActivityDate(b)).getTime() - new Date(orderActivityDate(a)).getTime())
   const profitTotals = useMemo(() => profitOrders.reduce((sum, order) => {
     const revenue = order.items.reduce((value, item) => value + item.quantity * item.unitPrice, 0)
@@ -601,7 +601,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationBonus = confirmationCost(order)
     return { revenue: sum.revenue + revenue, profit: sum.profit + revenue - costs - confirmationBonus, confirmationBonuses: sum.confirmationBonuses + confirmationBonus }
   }, { revenue: 0, profit: 0, confirmationBonuses: 0 }), [profitOrders, products, confirmationEmployees])
-  const profitSharedDelivery = dailyDeliveryCosts.filter(entry => (!profitStart || entry.date >= profitStart) && (!profitEnd || entry.date <= profitEnd)).reduce((sum, entry) => sum + entry.amount, 0)
+  const profitSharedDelivery = dailyDeliveryCosts.filter(entry => inDateRange(entry.date, profitRange)).reduce((sum, entry) => sum + entry.amount, 0)
+  const profitToday = dateKey(new Date())
+  const profitPresetRanges = [
+    { id: 'today', label: 'Today', range: { start: profitToday, end: profitToday } },
+    { id: 'month', label: 'This month', range: { start: monthStartKey(), end: profitToday } },
+    { id: 'last', label: 'Last month', range: previousMonthRange() },
+  ]
+  const activeProfitPreset = profitPresetRanges.find(({ range }) => range.start === profitRange.start && range.end === profitRange.end)?.id
   const rangeSharedDelivery = dailyDeliveryCosts.filter(entry => inDateRange(entry.date, orderRange)).reduce((sum, entry) => sum + entry.amount, 0)
   const selectedRangeOrders = ordersForRange(orders, orderRange)
   const selectedRangeDelivered = selectedRangeOrders.filter((order) => order.status === 'Delivered')
@@ -985,9 +992,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'profit' && <section className="page">
       <PageHeader title="Profit" subtitle="Delivered orders only" actions={appMenu()} />
-      <section className="range-control" aria-label="Choose profit date range"><label><span>From</span><div><CalendarBlank /><input type="date" value={profitStart} max={profitEnd || undefined} onChange={(event) => setProfitStart(event.target.value)} /></div></label><i /><label><span>To</span><div><CalendarBlank /><input type="date" value={profitEnd} min={profitStart || undefined} max={dateKey(new Date())} onChange={(event) => setProfitEnd(event.target.value)} /></div></label></section>
-      <div className="quick-range"><button className={profitStart === dateKey(new Date()) && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { const today = dateKey(new Date()); setProfitStart(today); setProfitEnd(today) }}>Today</button><button className={profitStart === monthStartKey() && profitEnd === dateKey(new Date()) ? 'selected' : ''} onClick={() => { setProfitStart(monthStartKey()); setProfitEnd(dateKey(new Date())) }}>This month</button><button className={profitStart === previousMonthRange().start && profitEnd === previousMonthRange().end ? 'selected' : ''} onClick={() => { const range = previousMonthRange(); setProfitStart(range.start); setProfitEnd(range.end) }}>Last month</button></div>
-      <p className="period-caption">{profitStart && profitEnd ? rangeLabel({ start: profitStart, end: profitEnd }) : 'Selected dates'} · By delivery date</p>
+      <div className="profit-range-presets" role="group" aria-label="Profit period">{profitPresetRanges.map(({ id, label, range }) => <button key={id} type="button" className={activeProfitPreset === id ? 'selected' : ''} aria-pressed={activeProfitPreset === id} onClick={() => setProfitRange(range)}>{label}</button>)}<button type="button" className={`profit-custom-range ${showProfitCalendar || !activeProfitPreset ? 'selected' : ''}`} aria-pressed={!activeProfitPreset} aria-haspopup="dialog" aria-expanded={showProfitCalendar} onClick={() => setShowProfitCalendar(true)}><CalendarBlank />Custom dates</button></div>
+      <p className="period-caption">{rangeLabel(profitRange)} · By delivery date</p>
       <section className="net-profit"><span>Net profit</span><strong>{preciseMoney(profitTotals.profit - profitSharedDelivery)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
       <p className="period-caption">Shared delivery costs: {preciseMoney(profitSharedDelivery)} · Average per delivered order: {profitOrders.length ? `${(profitSharedDelivery / profitOrders.length).toFixed(2)} DH` : '—'}</p>
       <section className="profit-grid"><Metric icon={<Tag />} label="Sales" value={money(profitTotals.revenue)} /><Metric icon={<ClipboardText />} label="Orders" value={String(profitOrders.length)} /><Metric icon={<UsersThree />} label="Team bonuses" value={money(profitTotals.confirmationBonuses)} /><Metric icon={<ChartBar />} label="Average net" value={preciseMoney(profitOrders.length ? (profitTotals.profit - profitSharedDelivery) / profitOrders.length : 0)} /></section>
@@ -1028,6 +1034,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'inventory' && <button className="ledger-fab inventory-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
 
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
+    {showProfitCalendar && <DateRangeCalendar value={profitRange} onChange={setProfitRange} close={() => setShowProfitCalendar(false)} scope="profit" />}
     {showDailyDelivery && <DailyDeliveryModal costs={dailyDeliveryCosts} orders={orders} products={products} employees={confirmationEmployees} ready={['dailyDelivery', 'orders', 'products', 'employees'].every(name => resourcePhases[name as ResourceName] === 'ready')} close={() => setShowDailyDelivery(false)} save={saveDailyDelivery} />}
     {showOrder && <Modal title="New order" close={() => setShowOrder(false)}><OrderForm products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={addOrder} /></Modal>}
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
@@ -1059,7 +1066,7 @@ function RestockModal({ product, batches, close, onSubmit }: { product: Product;
   </Modal>
 }
 
-function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onChange: (range: DateRange) => void; close: () => void }) {
+function DateRangeCalendar({ value, onChange, close, scope = 'orders' }: { value: DateRange; onChange: (range: DateRange) => void; close: () => void; scope?: 'orders' | 'profit' }) {
   const [visibleMonth, setVisibleMonth] = useState(() => { const date = new Date(`${value.start}T12:00:00`); return new Date(date.getFullYear(), date.getMonth(), 1) })
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const grid = useRef<HTMLDivElement>(null)
@@ -1095,12 +1102,12 @@ function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onCha
     dragAnchor.current = null
   }
   const resetToMonth = () => {
-    const now = new Date(); const range = { start: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)), end: monthEndKey(now) }
+    const now = new Date(); const range = { start: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)), end: scope === 'profit' ? dateKey(now) : monthEndKey(now) }
     onChange(range); setVisibleMonth(new Date(now.getFullYear(), now.getMonth(), 1)); setSelectionAnchor(null)
   }
   return <div className="range-calendar-scrim" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) close() }}>
-    <section className="range-calendar" role="dialog" aria-modal="true" aria-label="Choose order date range">
-      <header><div><span>Order range</span><strong>{rangeLabel(value)}</strong></div><button type="button" onClick={close} aria-label="Close calendar"><X /></button></header>
+    <section className="range-calendar" role="dialog" aria-modal="true" aria-label={`Choose ${scope === 'profit' ? 'profit' : 'order'} date range`}>
+      <header><div><span>{scope === 'profit' ? 'Profit range' : 'Order range'}</span><strong>{rangeLabel(value)}</strong></div><button type="button" onClick={close} aria-label="Close calendar"><X /></button></header>
       <div className="quick-range"><button type="button" onClick={resetToMonth}>This month</button><button type="button" onClick={() => { const range = previousMonthRange(); onChange(range); setVisibleMonth(new Date(`${range.start}T12:00:00`)); setSelectionAnchor(null) }}>Last month</button></div>
       <div className="calendar-month-nav"><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} aria-label="Previous month"><CaretLeft /></button><h2>{monthLabel(dateKey(visibleMonth))}</h2><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} aria-label="Next month"><CaretRight /></button></div>
       <p className="calendar-hint">Press and swipe across dates, or tap a start and end date.</p>
@@ -1109,7 +1116,7 @@ function DateRangeCalendar({ value, onChange, close }: { value: DateRange; onCha
         {days.map((day) => { const key = dateKey(day); const inMonth = day.getMonth() === visibleMonth.getMonth(); const inRange = key >= value.start && key <= value.end; const edge = key === value.start || key === value.end
           return <button key={key} type="button" data-date={key} className={`${inMonth ? '' : 'outside'} ${inRange ? 'in-range' : ''} ${edge ? 'range-edge' : ''} ${key === today ? 'today' : ''}`} aria-label={longDate(key)} aria-pressed={inRange} onPointerDown={(event) => { event.preventDefault(); startDrag(key, event.pointerId) }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseWithKeyboard(key) } }}><span>{day.getDate()}</span></button> })}
       </div>
-      <footer><button type="button" className="calendar-reset" onClick={resetToMonth}>This month</button><button type="button" className="calendar-done" onClick={close}>Show orders</button></footer>
+      <footer><button type="button" className="calendar-reset" onClick={resetToMonth}>This month</button><button type="button" className="calendar-done" onClick={close}>Show {scope === 'profit' ? 'profit' : 'orders'}</button></footer>
     </section>
   </div>
 }

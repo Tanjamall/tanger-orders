@@ -176,12 +176,12 @@ button:active { transform: scale(.96); }
 .info-strip { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--muted); font-size: 10px; }
 .info-strip svg { width: 17px; height: 17px; flex: 0 0 auto; }
 
-.range-control { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper-raised); }
-.range-control > i { background: var(--line); }
-.range-control label > span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 10px; }
-.range-control label > div { position: relative; display: flex; align-items: center; gap: 7px; }
-.range-control svg { width: 19px; height: 19px; }
-.range-control input { min-width: 0; width: 100%; padding: 4px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 10px; }
+.profit-range-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.profit-range-presets button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 0 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-raised); color: var(--ink); font: 600 12px/1 "Manrope", sans-serif; cursor: pointer; }
+.profit-range-presets button:hover { border-color: color-mix(in srgb, var(--pine) 40%, var(--line)); }
+.profit-range-presets button:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
+.profit-range-presets button.selected { border-color: var(--pine); background: var(--pine); color: var(--paper-raised); }
+.profit-range-presets svg { width: 17px; height: 17px; }
 .quick-range { display: flex; gap: 8px; margin-top: 10px; }
 .quick-range { flex-wrap: wrap; }
 .period-caption { margin: 10px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
