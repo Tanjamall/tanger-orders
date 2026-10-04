@@ -55,5 +55,5 @@ export function DateRangeCalendar({ value, onChange, close, done = close, scope 
       </div>
       <footer><button type="button" className="calendar-reset" onClick={resetToMonth}>This month</button><button type="button" className="calendar-done" onClick={done}>Show {scope === 'profit' ? 'profit' : scope === 'analysis' ? 'analysis' : 'orders'}</button></footer>
     </section>
-  </div>, document.body)
+  </div>, document.querySelector('.app-shell') ?? document.body)
 }
