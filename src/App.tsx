@@ -5,7 +5,7 @@ import { recoverSessionRead } from './supabase'
 import { isExpiredJwt } from './sessionRecovery'
 import { App as NativeApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowsClockwise,
@@ -13,8 +13,6 @@ import {
   BellSlash,
   Buildings,
   CalendarBlank,
-  CaretDown,
-  CaretLeft,
   CaretRight,
   ChartBar,
   CheckCircle,
@@ -52,6 +50,8 @@ import '@fontsource/manrope/600.css'
 import '@fontsource/manrope/700.css'
 import { EmptyState, FeatureBoundary, Metric, Modal, NavButton, PageHeader } from './components/ui'
 import { AppMenu } from './components/AppMenu'
+import { DateRangeCalendar } from './components/DateRangeCalendar'
+import { DateRangePresets } from './components/DateRangePresets'
 import { useAppUpdates } from './appUpdates'
 import { initialOrders, initialProducts } from './data'
 import { DesktopOrdersView, DesktopSidebar } from './features/orders/DesktopOrders'
@@ -79,7 +79,6 @@ import {
   monthLabel,
   monthStartKey,
   navigationUrl,
-  normalizedRange,
   normalizeStatus,
   openingBatches,
   orderFilters,
@@ -608,7 +607,11 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     { id: 'month', label: 'This month', range: { start: monthStartKey(), end: profitToday } },
     { id: 'last', label: 'Last month', range: previousMonthRange() },
   ]
-  const activeProfitPreset = profitPresetRanges.find(({ range }) => range.start === profitRange.start && range.end === profitRange.end)?.id
+  const orderPresetRanges = [
+    { id: 'today', label: 'Today', range: { start: profitToday, end: profitToday } },
+    { id: 'month', label: 'This month', range: { start: monthStartKey(), end: monthEndKey() } },
+    { id: 'last', label: 'Last month', range: previousMonthRange() },
+  ]
   const rangeSharedDelivery = dailyDeliveryCosts.filter(entry => inDateRange(entry.date, orderRange)).reduce((sum, entry) => sum + entry.amount, 0)
   const selectedRangeOrders = ordersForRange(orders, orderRange)
   const selectedRangeDelivered = selectedRangeOrders.filter((order) => order.status === 'Delivered')
@@ -968,7 +971,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab !== 'map' && <FeatureBoundary resetKey={tab}><div className="ledger-scroll"><div className="ledger-content">
     {tab === 'orders' && <section className="page quiet-orders mobile-orders-view">
       <PageHeader title="Orders" subtitle={orderRangeTitle} actions={<><button data-search-toggle className={`square-action ${showSearch || query ? 'is-active' : ''}`} aria-label="Search orders" onClick={() => setShowSearch(!showSearch)}><MagnifyingGlass /></button>{appMenu()}</>} />
-      <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{preciseMoney(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><button type="button" className="date-control" onClick={() => setShowOrderCalendar(true)} aria-haspopup="dialog"><CalendarBlank /><span><b>{currentMonthRange ? 'This month' : 'Selected range'}</b><small>{rangeLabel(orderRange)}</small></span><CaretDown /></button></section>
+      <section className="profit-date-bar"><div><span>{currentMonthRange ? "This month's profit" : 'Range profit'}</span><strong>{preciseMoney(selectedRangeProfit)}</strong><small><CheckCircle />{selectedRangeDelivered.length} delivered</small></div><span className="order-range-label">{rangeLabel(orderRange)}</span></section>
+      <DateRangePresets value={orderRange} presets={orderPresetRanges} onChange={setOrderRange} onCustom={() => setShowOrderCalendar(true)} customOpen={showOrderCalendar} label="Orders period" />
       <button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost</button>
       {rangeSharedDelivery > 0 && <p className="period-caption">Includes {preciseMoney(rangeSharedDelivery)} shared delivery costs for this period.</p>}
       {showSearch && <label className="search-field"><MagnifyingGlass /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customer, phone, or address" /><button type="button" onClick={() => setQuery('')} aria-label="Clear search"><X /></button></label>}
@@ -981,7 +985,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="ledger-section range-ledger">{orderGroups.map((group) => <div className="order-day-group" key={group.date}><h2><span>{statusFilter === 'Delivered' ? 'Delivered · ' : ''}{group.date === eventDateKey(new Date().toISOString()) ? 'Today' : longDate(group.date)}</span><small>{group.orders.length} {group.orders.length === 1 ? 'order' : 'orders'}</small></h2><div className="order-ledger">{group.orders.map((order) => <OrderCard key={order.id} order={order} highlighted={highlightedPushOrderIds.includes(order.id)} products={products} members={members} confirmationEmployees={confirmationEmployees} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />)}</div></div>)}{!visibleOrders.length && resourcePhases.orders === 'loading' ? <DataLoading label="Loading orders" /> : !visibleOrders.length && !visibleCarryover.length && <EmptyState icon={<ClipboardText />} title="No matching orders" copy="Try another range, status, or search." />}</section>
     </section>}
 
-    {tab === 'orders' && <DesktopOrdersView dailyDeliveryAction={<button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost{rangeSharedDelivery > 0 ? ` · ${preciseMoney(rangeSharedDelivery)} this period` : ''}</button>} orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openCalendar={() => setShowOrderCalendar(true)} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
+    {tab === 'orders' && <DesktopOrdersView dateControls={<DateRangePresets value={orderRange} presets={orderPresetRanges} onChange={setOrderRange} onCustom={() => setShowOrderCalendar(true)} customOpen={showOrderCalendar} label="Orders period" />} dailyDeliveryAction={<button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost{rangeSharedDelivery > 0 ? ` · ${preciseMoney(rangeSharedDelivery)} this period` : ''}</button>} orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
@@ -992,7 +996,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'profit' && <section className="page">
       <PageHeader title="Profit" subtitle="Delivered orders only" actions={appMenu()} />
-      <div className="profit-range-presets" role="group" aria-label="Profit period">{profitPresetRanges.map(({ id, label, range }) => <button key={id} type="button" className={activeProfitPreset === id ? 'selected' : ''} aria-pressed={activeProfitPreset === id} onClick={() => setProfitRange(range)}>{label}</button>)}<button type="button" className={`profit-custom-range ${showProfitCalendar || !activeProfitPreset ? 'selected' : ''}`} aria-pressed={!activeProfitPreset} aria-haspopup="dialog" aria-expanded={showProfitCalendar} onClick={() => setShowProfitCalendar(true)}><CalendarBlank />Custom dates</button></div>
+      <DateRangePresets value={profitRange} presets={profitPresetRanges} onChange={setProfitRange} onCustom={() => setShowProfitCalendar(true)} customOpen={showProfitCalendar} label="Profit period" />
       <p className="period-caption">{rangeLabel(profitRange)} · By delivery date</p>
       <section className="net-profit"><span>Net profit</span><strong>{preciseMoney(profitTotals.profit - profitSharedDelivery)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
       <p className="period-caption">Shared delivery costs: {preciseMoney(profitSharedDelivery)} · Average per delivered order: {profitOrders.length ? `${(profitSharedDelivery / profitOrders.length).toFixed(2)} DH` : '—'}</p>
@@ -1066,60 +1070,6 @@ function RestockModal({ product, batches, close, onSubmit }: { product: Product;
   </Modal>
 }
 
-function DateRangeCalendar({ value, onChange, close, scope = 'orders' }: { value: DateRange; onChange: (range: DateRange) => void; close: () => void; scope?: 'orders' | 'profit' }) {
-  const [visibleMonth, setVisibleMonth] = useState(() => { const date = new Date(`${value.start}T12:00:00`); return new Date(date.getFullYear(), date.getMonth(), 1) })
-  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
-  const grid = useRef<HTMLDivElement>(null)
-  const dragAnchor = useRef<string | null>(null)
-  const dragMoved = useRef(false)
-  const continuingSelection = useRef(false)
-  const today = dateKey(new Date())
-  const monthStart = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1)
-  const calendarStart = new Date(monthStart); calendarStart.setDate(calendarStart.getDate() - ((calendarStart.getDay() + 6) % 7))
-  const days = Array.from({ length: 42 }, (_item, index) => { const day = new Date(calendarStart); day.setDate(calendarStart.getDate() + index); return day })
-  const selectTo = (anchor: string, target: string) => onChange(normalizedRange(anchor, target))
-  const chooseWithKeyboard = (key: string) => {
-    if (selectionAnchor) { selectTo(selectionAnchor, key); setSelectionAnchor(null) }
-    else { onChange({ start: key, end: key }); setSelectionAnchor(key) }
-  }
-  const startDrag = (key: string, pointerId: number) => {
-    const anchor = selectionAnchor ?? key
-    dragAnchor.current = anchor; dragMoved.current = false; continuingSelection.current = Boolean(selectionAnchor)
-    if (selectionAnchor) selectTo(selectionAnchor, key); else onChange({ start: key, end: key })
-    grid.current?.setPointerCapture(pointerId)
-  }
-  const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragAnchor.current) return
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>('[data-date]')
-    const key = target?.dataset.date
-    if (!key) return
-    if (key !== dragAnchor.current) dragMoved.current = true
-    selectTo(dragAnchor.current, key)
-  }
-  const endDrag = () => {
-    if (!dragAnchor.current) return
-    if (dragMoved.current || continuingSelection.current) setSelectionAnchor(null); else setSelectionAnchor(dragAnchor.current)
-    dragAnchor.current = null
-  }
-  const resetToMonth = () => {
-    const now = new Date(); const range = { start: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)), end: scope === 'profit' ? dateKey(now) : monthEndKey(now) }
-    onChange(range); setVisibleMonth(new Date(now.getFullYear(), now.getMonth(), 1)); setSelectionAnchor(null)
-  }
-  return <div className="range-calendar-scrim" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) close() }}>
-    <section className="range-calendar" role="dialog" aria-modal="true" aria-label={`Choose ${scope === 'profit' ? 'profit' : 'order'} date range`}>
-      <header><div><span>{scope === 'profit' ? 'Profit range' : 'Order range'}</span><strong>{rangeLabel(value)}</strong></div><button type="button" onClick={close} aria-label="Close calendar"><X /></button></header>
-      <div className="quick-range"><button type="button" onClick={resetToMonth}>This month</button><button type="button" onClick={() => { const range = previousMonthRange(); onChange(range); setVisibleMonth(new Date(`${range.start}T12:00:00`)); setSelectionAnchor(null) }}>Last month</button></div>
-      <div className="calendar-month-nav"><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} aria-label="Previous month"><CaretLeft /></button><h2>{monthLabel(dateKey(visibleMonth))}</h2><button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} aria-label="Next month"><CaretRight /></button></div>
-      <p className="calendar-hint">Press and swipe across dates, or tap a start and end date.</p>
-      <div className="calendar-weekdays" aria-hidden="true">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}</div>
-      <div className="calendar-grid" ref={grid} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}>
-        {days.map((day) => { const key = dateKey(day); const inMonth = day.getMonth() === visibleMonth.getMonth(); const inRange = key >= value.start && key <= value.end; const edge = key === value.start || key === value.end
-          return <button key={key} type="button" data-date={key} className={`${inMonth ? '' : 'outside'} ${inRange ? 'in-range' : ''} ${edge ? 'range-edge' : ''} ${key === today ? 'today' : ''}`} aria-label={longDate(key)} aria-pressed={inRange} onPointerDown={(event) => { event.preventDefault(); startDrag(key, event.pointerId) }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseWithKeyboard(key) } }}><span>{day.getDate()}</span></button> })}
-      </div>
-      <footer><button type="button" className="calendar-reset" onClick={resetToMonth}>This month</button><button type="button" className="calendar-done" onClick={close}>Show {scope === 'profit' ? 'profit' : 'orders'}</button></footer>
-    </section>
-  </div>
-}
 function PasswordRecoveryScreen({ onComplete }: { onComplete: () => void }) {
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)

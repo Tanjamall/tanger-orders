@@ -74,12 +74,13 @@ button:active { transform: scale(.96); }
 .square-action:hover, .text-action:hover { border-color: color-mix(in srgb, var(--pine) 20%, var(--line)); box-shadow: 0 5px 14px rgb(16 45 34 / 8%); transform: translateY(-1px); }
 .text-action { display: flex; align-items: center; gap: 7px; padding: 0 13px; }
 
-.profit-date-bar { display: grid; grid-template-columns: minmax(0, 1fr) 1.15fr; gap: 12px; margin-bottom: 9px; padding: 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper-raised); }
-.profit-date-bar > div { min-width: 0; padding: 3px 7px 3px 2px; border-right: 1px solid var(--line); }
+.profit-date-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; padding: 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper-raised); }
+.profit-date-bar > div { min-width: 0; padding: 3px 7px 3px 2px; }
 .profit-date-bar > div > span { display: block; color: var(--muted); font-size: 12px; }
 .profit-date-bar > div > strong { display: block; margin-top: 1px; color: var(--pine); font: 700 25px/1.05 "Fraunces", serif; }
 .profit-date-bar > div > small { display: flex; align-items: center; gap: 4px; margin-top: 2px; color: var(--pine-soft); font-size: 9px; }
 .profit-date-bar > div > small svg { width: 13px; height: 13px; }
+.order-range-label { max-width: 50%; color: var(--muted); font-size: 10px; text-align: right; }
 .date-control { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-raised); color: var(--ink); overflow: hidden; text-align: left; }
 .date-control > svg { width: 22px; height: 22px; }
 .date-control span, .date-control b, .date-control small { display: block; }
@@ -176,12 +177,13 @@ button:active { transform: scale(.96); }
 .info-strip { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--muted); font-size: 10px; }
 .info-strip svg { width: 17px; height: 17px; flex: 0 0 auto; }
 
-.profit-range-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.profit-range-presets button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 0 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-raised); color: var(--ink); font: 600 12px/1 "Manrope", sans-serif; cursor: pointer; }
-.profit-range-presets button:hover { border-color: color-mix(in srgb, var(--pine) 40%, var(--line)); }
-.profit-range-presets button:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
-.profit-range-presets button.selected { border-color: var(--pine); background: var(--pine); color: var(--paper-raised); }
-.profit-range-presets svg { width: 17px; height: 17px; }
+.date-range-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; width: 100%; max-width: 500px; margin: 4px 0 0; }
+.date-range-presets button { display: grid; place-items: center; min-width: 0; min-height: 42px; padding: 0 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised); color: var(--ink); font: 600 11px/1.15 "Manrope", sans-serif; white-space: nowrap; cursor: pointer; }
+.date-range-presets button:hover { border-color: color-mix(in srgb, var(--pine) 40%, var(--line)); }
+.date-range-presets button:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
+.date-range-presets button.selected { border-color: var(--pine); background: var(--pine); color: var(--paper-raised); }
+.date-range-presets.analysis-range { grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 620px; }
+@media (max-width: 420px) { .date-range-presets.analysis-range { display: flex; overflow-x: auto; scrollbar-width: none; } .date-range-presets.analysis-range::-webkit-scrollbar { display: none; } .date-range-presets.analysis-range button { flex: 0 0 70px; } }
 .quick-range { display: flex; gap: 8px; margin-top: 10px; }
 .quick-range { flex-wrap: wrap; }
 .period-caption { margin: 10px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -293,8 +295,8 @@ button:active { transform: scale(.96); }
 .leaflet-control-attribution { font-size: 7px !important; }
 .leaflet-popup-content { margin: 10px 12px; font: 11px/1.4 "Manrope", sans-serif; }
 
-.range-calendar-scrim { position: absolute; z-index: 110; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: rgb(8 24 18 / 58%); backdrop-filter: blur(4px); animation: soft-fade .22s ease both; }
-.range-calendar { width: min(100%, 430px); padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--paper); color: var(--ink); box-shadow: 0 24px 60px rgb(0 25 18 / 24%); animation: sheet-enter .34s cubic-bezier(.22, .8, .28, 1) both; }
+.range-calendar-scrim { position: fixed; z-index: 110; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: rgb(8 24 18 / 58%); backdrop-filter: blur(4px); animation: soft-fade .22s ease both; }
+.range-calendar { width: min(100%, 430px); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--paper); color: var(--ink); box-shadow: 0 24px 60px rgb(0 25 18 / 24%); animation: sheet-enter .34s cubic-bezier(.22, .8, .28, 1) both; }
 .range-calendar > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .range-calendar > header span, .range-calendar > header strong { display: block; }
 .range-calendar > header span { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
@@ -627,6 +629,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .ledger-content > .page:not(.mobile-orders-view) { width: min(100%, 980px); margin: 0 auto; padding: 44px 52px 90px; }
   .mobile-orders-view, .ledger-bottom-nav, .mobile-only-fab { display: none; }
   .desktop-orders-view { display: block; min-width: 0; padding: 0 25px 30px; animation: page-enter .36s ease both; }
+  .desktop-orders-view > .date-range-presets { margin: 0 0 18px; }
   .inventory-fab { right: 30px; bottom: 28px; }
   .map-screen { left: var(--desktop-nav-width); }
   .map-canvas { bottom: 0; }

@@ -67,6 +67,7 @@ export function DesktopSidebar({ tab, setTab, displayName }: DesktopSidebarProps
 }
 
 type DesktopOrdersViewProps = {
+  dateControls: ReactNode
   dailyDeliveryAction: ReactNode
   orders: Order[]
   carryoverOrders: Order[]
@@ -83,7 +84,6 @@ type DesktopOrdersViewProps = {
   setQuery: (value: string) => void
   statusFilter: Status | 'All'
   setStatusFilter: (value: Status | 'All') => void
-  openCalendar: () => void
   newOrder: () => void
   menu: ReactNode
   onStatus: (id: string, status: Status) => void
@@ -91,7 +91,7 @@ type DesktopOrdersViewProps = {
   onDelete: (order: Order) => void
 }
 
-export function DesktopOrdersView({ dailyDeliveryAction, orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, openCalendar, newOrder, menu, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
+export function DesktopOrdersView({ dateControls, dailyDeliveryAction, orders, carryoverOrders, carryoverCount, rangeOrders, highlightedOrderIds, deliveredCount, rangeProfit, rangeLabelText, products, members, confirmationEmployees, query, setQuery, statusFilter, setStatusFilter, newOrder, menu, onStatus, onEdit, onDelete }: DesktopOrdersViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const selectableOrders = [...carryoverOrders, ...orders]
@@ -106,11 +106,12 @@ export function DesktopOrdersView({ dailyDeliveryAction, orders, carryoverOrders
 
   return <section className="desktop-orders-view" aria-label="Orders desktop workspace">
     <header className="desktop-orders-header">
-      <div><h1>Orders</h1><button type="button" onClick={openCalendar}><CalendarBlank />{rangeLabelText}<CaretDown /></button></div>
+      <div><h1>Orders</h1><span className="desktop-orders-range-label">{rangeLabelText}</span></div>
       <label className="desktop-search"><MagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search orders, customers, products…" />{query && <button type="button" aria-label="Clear search" onClick={() => setQuery('')}><X /></button>}</label>
       <button className="desktop-new-order" onClick={newOrder}><Plus />New order</button>
       {menu}
     </header>
+    {dateControls}
 
     <section className="desktop-summary" aria-label="Order summary">
       <div><i><Tag /></i><span>Net profit<small>From {deliveredCount} delivered {deliveredCount === 1 ? 'order' : 'orders'}</small></span><strong>{preciseMoney(rangeProfit)}</strong></div>
