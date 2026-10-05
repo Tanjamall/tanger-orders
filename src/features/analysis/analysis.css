@@ -157,3 +157,116 @@
   .overview-primary { padding:20px 0; }
   .compact-table th,.compact-table td { padding-top:13px; padding-bottom:13px; }
 }
+
+/* Phone reports use readable lists and a separate row for each control group. */
+.mobile-report-list,.mobile-product-sort,.mobile-period-label,.mobile-report-about,.mobile-history-back,.mobile-chart-hint,.mobile-product-hint,.mobile-history-period,.mobile-report-explanation { display:none; }
+@media(max-width:599px) {
+  .growth-dashboard .report-header { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding-bottom:18px; border:0; }
+  .growth-dashboard .report-header h1 { font-size:34px; }
+  .growth-dashboard .report-header p { font:400 14px/1.5 'Manrope',sans-serif; }
+  .growth-dashboard .report-header-actions { width:auto; align-self:start; }
+  .report-header .report-date-label { display:none; }
+  .growth-dashboard .report-navigation { display:block; padding:0; border:0; }
+  .growth-dashboard .growth-jumps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; width:100%; overflow:visible; border-bottom:1px solid var(--line); }
+  .growth-dashboard .growth-jumps a { justify-content:center; min-width:0; min-height:46px; padding:8px 0; font-size:12px; }
+  .growth-jumps a[href$='/about'] { display:none; }
+  .growth-dashboard .growth-toolbar { display:grid; grid-template-columns:1fr; gap:8px; margin-top:16px; }
+  .growth-dashboard .date-range-presets.analysis-range { display:grid; grid-template-columns:1.25fr repeat(4,minmax(0,1fr)); gap:4px; max-width:none; overflow:visible; margin:0; }
+  .growth-dashboard .date-range-presets.analysis-range button { min-height:44px; padding:0 2px; font-size:11px; }
+  .mobile-period-label { display:flex; align-items:center; gap:7px; margin:1px 0 0; color:var(--muted); font-size:12px; }
+  .mobile-period-label svg { width:16px; height:16px; }
+  .growth-dashboard .compare-control { min-height:44px; font-size:12px; }
+  .report-products .compare-control,.report-customers .compare-control,.report-inventory .compare-control,.report-about .compare-control { display:none; }
+  .compare-control small { font-size:12px; }
+  .growth-dashboard .growth-kpis { padding:16px 0 20px; gap:18px 0; }
+  .growth-dashboard .growth-metric { display:flex; flex-direction:column; align-items:flex-start; text-align:left; padding:0 14px; }
+  .growth-dashboard .growth-metric:nth-child(odd) { padding-left:0; }
+  .growth-dashboard .growth-metric:nth-child(even) { border:0; }
+  .growth-dashboard .growth-metric > span { order:-1; margin:0 0 4px; font-size:12px; }
+  .growth-dashboard .growth-metric > strong { font:600 25px/1.3 'Manrope',sans-serif; letter-spacing:-.04em; }
+  .growth-dashboard .growth-metric small { min-height:20px; margin-top:4px; font-size:12px; justify-content:flex-start; }
+  .growth-dashboard .growth-metric small svg { width:14px; height:14px; }
+  .growth-dashboard .product-kpis { gap:12px; }
+  .growth-dashboard .product-kpis .growth-metric { flex-direction:row; align-items:center; justify-content:space-between; padding:0; }
+  .growth-dashboard .product-kpis .growth-metric > span { margin:0; font-size:13px; }
+  .growth-dashboard .product-kpis .growth-metric > strong { font-size:20px; }
+  .growth-dashboard .analysis-section h2 { font-size:23px; }
+  .growth-dashboard .overview-primary,.growth-dashboard .overview-secondary { gap:22px; padding:22px 0; }
+  .growth-dashboard .growth-trend header { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
+  .growth-dashboard .growth-trend .chart-header-controls { display:grid; grid-template-columns:minmax(0,1fr) auto; width:100%; gap:10px; }
+  .chart-header-controls .growth-segments { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); width:100%; min-width:0; }
+  .growth-dashboard .growth-segments button { min-width:0; min-height:44px; padding:8px 7px; font-size:12px; }
+  .growth-select select { min-height:44px; max-width:88px; padding:8px; font-size:12px; }
+  .growth-dashboard .trend-legend { flex-wrap:wrap; gap:6px 16px; font-size:11px; }
+  .growth-dashboard .growth-chart { min-height:170px; }
+  .growth-dashboard .growth-chart text { font-size:27px; }
+  .growth-dashboard .trend-readout { position:static; display:grid; grid-template-columns:1fr auto; gap:2px 8px; width:100%; max-width:none; margin:0 0 10px; padding:10px 36px 10px 12px; font-size:12px; box-shadow:none; }
+  .trend-readout > span { grid-column:1/-1; }
+  .trend-readout button { top:8px; right:8px; min-width:32px; min-height:32px; }
+  .growth-dashboard .trend-readout strong { font-size:13px; }
+  .mobile-chart-hint { display:block; margin:8px 0 0; color:var(--muted); font-size:12px; }
+  .growth-dashboard .chart-note { font-size:11px; margin-top:4px; }
+  .growth-dashboard .cost-heading,.growth-dashboard .cost-line { grid-template-columns:minmax(0,1fr) minmax(65px,auto) 48px; gap:8px; font-size:13px; }
+  .cost-heading > span:last-child,.cost-line > progress { display:none; }
+  .growth-dashboard .cost-line { min-height:50px; }
+  .growth-dashboard .growth-note { font-size:12px; line-height:1.6; }
+  .growth-dashboard .desktop-report-table { display:none; }
+  .mobile-report-list { display:block; }
+  .mobile-product-row,.mobile-record-row { display:block; width:100%; padding:18px 0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; color:var(--ink); text-align:start; font:400 14px/1.5 'Manrope',sans-serif; }
+  button.mobile-product-row:hover,button.mobile-record-row:hover { background:var(--paper-soft); }
+  button.mobile-product-row:active,button.mobile-record-row:active { transform:none; background:var(--mint); }
+  .mobile-row-heading { display:flex; justify-content:space-between; align-items:start; gap:12px; font-weight:600; font-size:16px; }
+  .mobile-row-heading bdi { min-width:0; overflow-wrap:anywhere; }
+  .mobile-row-heading > svg { flex-shrink:0; width:20px; height:20px; color:var(--pine); }
+  .mobile-row-caption { display:block; margin-top:4px; color:var(--muted); font-size:12px; }
+  .mobile-row-metrics { display:grid; grid-template-columns:1fr 1fr .7fr; gap:8px; margin-top:12px; }
+  .mobile-row-metrics small,.mobile-inventory-metrics small { display:block; color:var(--muted); font-size:11px; font-weight:400; }
+  .mobile-row-metrics strong,.mobile-inventory-metrics strong { display:block; margin-top:2px; font-size:14px; font-weight:600; overflow-wrap:anywhere; }
+  .mobile-row-tag { color:var(--muted); font-size:11px; font-weight:400; white-space:nowrap; padding-top:3px; }
+  .mobile-record-metrics,.mobile-inventory-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 18px; margin:14px 0 0; }
+  .mobile-record-metrics dt { color:var(--muted); font-size:11px; }
+  .mobile-record-metrics dd { margin:3px 0 0; font-size:15px; font-weight:600; }
+  .mobile-product-sort { display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:12px; color:var(--muted); margin:0 0 4px; }
+  .mobile-product-sort select { min-width:0; max-width:75%; min-height:44px; padding:8px; border:1px solid var(--line); border-radius:8px; font-size:12px; }
+  .growth-dashboard .growth-products > header,.growth-dashboard .report-records > header { gap:12px; }
+  .growth-dashboard .growth-search { min-height:44px; border-radius:8px; }
+  .record-toolbar { gap:10px; }
+  .record-toolbar > .growth-segments { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); width:100%; }
+  .record-toolbar .growth-segments button { white-space:normal; line-height:1.3; }
+  .record-toolbar > span { font-size:12px; }
+  .growth-dashboard .status-distribution { margin-top:12px; }
+  .growth-dashboard .status-distribution > div { grid-template-columns:78px 22px minmax(0,1fr) 48px; gap:8px; font-size:12px; }
+  .growth-dashboard .report-link { min-height:44px; font-size:12px; }
+  .growth-dashboard .product-workspace { padding-top:20px; }
+  .growth-dashboard .product-workspace.has-detail { display:block; }
+  .product-workspace.has-detail .growth-products { display:none; }
+  .report-products:has(.has-detail) > .product-kpis { display:none; }
+  .growth-dashboard .growth-history { padding:0; border:0; }
+  .growth-history header { display:flex; }
+  .growth-history .detail-close { order:-1; width:100%; height:auto; min-height:44px; padding:0; justify-content:start; color:var(--pine); text-align:left; }
+  .desktop-history-close { display:none; }
+  .growth-history .mobile-history-back { display:flex; gap:8px; align-items:center; font:600 13px 'Manrope',sans-serif; text-transform:none; letter-spacing:normal; color:var(--pine); }
+  .mobile-product-hint,.mobile-history-period { display:block; }
+  .desktop-product-hint { display:none; }
+  .mobile-history-period { margin:0 0 12px; color:var(--muted); font-size:12px; }
+  .growth-history .product-sales-chart .growth-note { position:static; width:auto; height:auto; overflow:visible; clip:auto; }
+  .growth-history .product-sales-chart .growth-chart text { font-size:13px; }
+  .report-records > .report-explanation { display:none; }
+  .mobile-report-explanation { display:block; margin-top:22px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; line-height:1.7; }
+  .mobile-report-explanation summary { min-height:44px; padding:12px 0; color:var(--pine); cursor:pointer; }
+  .mobile-report-explanation h3 { display:none; }
+  .mobile-report-explanation p { margin:0 0 12px; }
+  .growth-dashboard .growth-history .history-events { max-height:none; overflow:visible; }
+  .growth-history .history-events article { grid-template-columns:1fr !important; gap:4px !important; }
+  .growth-dashboard .growth-history .history-events time { font-size:12px; }
+  .growth-history .history-scope { min-height:44px; font-size:12px; }
+  .growth-history .growth-segments { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); width:100%; }
+  .detail-stats strong { font:600 22px 'Manrope',sans-serif; }
+  .detail-stats span { font-size:12px; }
+  .report-more summary { min-height:44px; padding:12px 0; color:var(--pine); }
+  .weekday-grid { grid-template-columns:repeat(2,minmax(0,1fr)); row-gap:18px; }
+  .growth-dashboard .report-footer { display:flex; gap:10px; padding-top:12px; }
+  .report-footer .mobile-report-about { display:inline-flex; }
+  .report-footer > p { order:2; width:100%; max-width:none; font-size:11px; line-height:1.7; }
+  .growth-definitions > h2 { font-size:25px; }
+}
