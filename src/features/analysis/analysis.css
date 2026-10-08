@@ -37,6 +37,34 @@
 .change-up,.profit-cell { color:var(--pine); }
 .change-down,.growth-negative { color:var(--coral) !important; }
 .overview-primary,.overview-secondary { display:grid; grid-template-columns:minmax(0,1.62fr) minmax(0,1fr); gap:24px; padding:22px 0; border-bottom:1px solid var(--line); }
+.capital-summary { padding:22px 0 16px; border-bottom:1px solid var(--line); }
+.capital-heading h2 { margin:0; font-size:26px; color:var(--ink); }
+.capital-heading h2 span { margin-left:8px; font:400 12px 'Manrope',sans-serif; color:var(--muted); letter-spacing:0; }
+.capital-heading p { margin:6px 0 18px; color:var(--muted); font-size:13px; line-height:1.6; }
+.capital-values { display:grid; grid-template-columns:1.3fr 1fr 1fr; gap:24px; margin:0; }
+.capital-values > div { min-width:0; }
+.capital-values dt { font-size:14px; color:var(--muted); }
+.capital-values dd { margin:4px 0 0; font:600 25px/1.3 'Manrope',sans-serif; overflow-wrap:anywhere; }
+.capital-values .capital-total dd { color:var(--pine); font-size:29px; }
+.capital-breakdown { margin-top:14px; font-size:14px; }
+.capital-breakdown summary { width:fit-content; min-height:44px; padding:12px 0; cursor:pointer; color:var(--pine); }
+.capital-breakdown dl { max-width:620px; margin:0; }
+.capital-breakdown dl > div { display:flex; justify-content:space-between; gap:20px; padding:10px 0; border-bottom:1px solid var(--line); }
+.capital-breakdown dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+.capital-breakdown .capital-result { color:var(--pine); font-weight:700; }
+.capital-breakdown p,.capital-pending { max-width:760px; color:var(--muted); font-size:13px; line-height:1.7; }
+@media(max-width:599px) {
+  .capital-summary { padding-top:18px; }
+  .capital-heading h2 { font-size:24px; }
+  .capital-heading p { font-size:12px; }
+  .capital-values { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 12px; }
+  .capital-values .capital-total { grid-column:1/-1; }
+  .capital-values dt { font-size:12px; }
+  .capital-values dd { font-size:19px; }
+  .capital-values .capital-total dd { font-size:27px; }
+  .capital-breakdown { font-size:13px; }
+  .capital-breakdown dl > div { gap:12px; }
+}
 .growth-dashboard .analysis-section { min-width:0; margin:0; padding:0; border:0; background:transparent; }
 .growth-dashboard .analysis-section header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin:0 0 16px; }
 .growth-dashboard .analysis-section h2 { margin:0; font-size:30px; line-height:1.2; font-weight:600; color:var(--ink); }

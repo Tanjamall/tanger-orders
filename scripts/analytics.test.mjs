@@ -10,7 +10,7 @@ const ordersCompiled = ts.transpileModule(ordersSource, { compilerOptions }).out
 const ordersUrl = `data:text/javascript;base64,${Buffer.from(ordersCompiled).toString('base64')}`
 const analyticsSource = await readFile(new URL('../src/domain/analytics.ts', import.meta.url), 'utf8')
 const analyticsCompiled = ts.transpileModule(analyticsSource, { compilerOptions }).outputText.replace("from './orders'", `from '${ordersUrl}'`)
-const { analyticsRange, buildAnalytics, buildBusinessAnalytics, previousAnalyticsRange, calendarSeries, analyticsChange, analyticsCsv } = await import(`data:text/javascript;base64,${Buffer.from(analyticsCompiled).toString('base64')}`)
+const { analyticsRange, buildAnalytics, buildBusinessAnalytics, buildCapitalAnalytics, previousAnalyticsRange, calendarSeries, analyticsChange, analyticsCsv } = await import(`data:text/javascript;base64,${Buffer.from(analyticsCompiled).toString('base64')}`)
 
 const products = [
   { id: 'p1', name: 'Blender', cost: 40, price: 100, stock: 3, lowStockAt: 1 },
@@ -24,6 +24,24 @@ const orders = [
   { ...base, id: 'o3', client: 'Canceled', status: 'Canceled', createdAt: '2026-09-06T12:00:00Z', items: [{ productId: 'p1', quantity: 1, unitPrice: 100 }], deliveryCharge: 20, otherExpense: 0 },
   { ...base, id: 'o4', client: 'Pending', status: 'Confirmed', createdAt: '2026-09-07T12:00:00Z', items: [{ productId: 'p2', quantity: 1, unitPrice: 100 }], deliveryCharge: 10, otherExpense: 0 },
 ]
+
+test('current capital uses all delivered sales, stock at cost and all recorded expenses without counting bundles twice', () => {
+  const catalog = [...products, { id: 'bundle', name: 'Set', cost: 999, price: 200, stock: 99, lowStockAt: 1, components: [{ productId: 'p1', quantity: 1 }, { productId: 'p2', quantity: 1 }] }]
+  const later = { ...orders[1], id: 'later', deliveredAt: '2026-10-07T12:00:00Z' }
+  const result = buildCapitalAnalytics([...orders, later], catalog, employees, [{ date: '2026-09-08', amount: 12.5 }, { date: '2026-10-08', amount: 20 }])
+  // Stock 270 + revenue 400 - profit 172.5 = 497.5; pending/canceled orders contribute no sales.
+  assert.deepEqual(result, { stockValue: 270, salesRevenue: 400, netProfit: 172.5, salesExcludingProfit: 227.5, total: 497.5 })
+  for (const range of [null, { start: '2026-09-01', end: '2026-09-30' }, { start: '2026-10-01', end: '2026-10-08' }]) {
+    assert.equal(buildBusinessAnalytics([...orders, later], catalog, employees, [], range).stockValue, result.stockValue)
+  }
+})
+
+test('capital handles empty history, decimal stock costs and net losses', () => {
+  assert.equal(buildCapitalAnalytics([], [], []).total, 0)
+  const stock = [{ ...products[0], stock: 2, cost: 40.25 }]
+  const result = buildCapitalAnalytics([], stock, [], [{ date: '2026-10-08', amount: 12.5 }])
+  assert.deepEqual(result, { stockValue: 80.5, salesRevenue: 0, netProfit: -12.5, salesExcludingProfit: 12.5, total: 93 })
+})
 
 test('shared daily delivery is deducted once, without changing product profitability or order counts', () => {
   const range = { start: '2026-09-01', end: '2026-09-30' }

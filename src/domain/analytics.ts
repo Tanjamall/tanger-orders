@@ -258,6 +258,19 @@ export function calendarSeries(points: PeriodPoint[], range: DateRange | null, g
   return result
 }
 
+function inventoryCostValue(product: Product, products: Product[]) {
+  // Bundles share their components' stock; counting them again would inflate capital.
+  return product.components?.length ? 0 : bundleStock(product, products) * productCost(product, products)
+}
+
+export function buildCapitalAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], dailyCosts: DailyDeliveryCost[] = []) {
+  // Current capital always uses the complete history, independent of report filters.
+  const { totals } = buildAnalytics(orders, products, employees, null, dailyCosts)
+  const stockValue = products.reduce((sum, product) => sum + inventoryCostValue(product, products), 0)
+  const salesExcludingProfit = totals.revenue - totals.profit
+  return { stockValue, salesRevenue: totals.revenue, netProfit: totals.profit, salesExcludingProfit, total: stockValue + salesExcludingProfit }
+}
+
 export function buildBusinessAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], batches: InventoryBatch[], range: DateRange | null, now = new Date()) {
   const today = eventDateKey(now.toISOString())
   const revenueOf = (order: Order) => order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
@@ -297,7 +310,7 @@ export function buildBusinessAnalytics(orders: Order[], products: Product[], emp
   const inventory = products.map(product => {
     const stock = bundleStock(product, products)
     const units = demand.get(product.id) ?? 0
-    return { id: product.id, name: product.name, bundle: !!product.components?.length, stock, units, cover: units ? stock / (units / 30) : null, low: stock <= product.lowStockAt, value: product.components?.length ? 0 : stock * productCost(product, products) }
+    return { id: product.id, name: product.name, bundle: !!product.components?.length, stock, units, cover: units ? stock / (units / 30) : null, low: stock <= product.lowStockAt, value: inventoryCostValue(product, products) }
   }).sort((a, b) => Number(b.low) - Number(a.low) || (a.cover ?? Infinity) - (b.cover ?? Infinity) || a.name.localeCompare(b.name))
   const restocks = batches.filter(batch => batch.source === 'restock' && rangeContains(eventDateKey(batch.receivedAt), range))
   return {
