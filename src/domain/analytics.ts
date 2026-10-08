@@ -263,12 +263,14 @@ function inventoryCostValue(product: Product, products: Product[]) {
   return product.components?.length ? 0 : bundleStock(product, products) * productCost(product, products)
 }
 
-export function buildCapitalAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], dailyCosts: DailyDeliveryCost[] = []) {
-  // Current capital always uses the complete history, independent of report filters.
-  const { totals } = buildAnalytics(orders, products, employees, null, dailyCosts)
+export function buildCapitalAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], dailyCosts: DailyDeliveryCost[] = [], now = new Date()) {
+  // Recycled sales from older months are already reflected in today's stock.
+  // Only this month's sales and profit contribute, independent of report filters.
+  const range = analyticsRange('month', now)!
+  const { totals } = buildAnalytics(orders, products, employees, range, dailyCosts)
   const stockValue = products.reduce((sum, product) => sum + inventoryCostValue(product, products), 0)
   const salesExcludingProfit = totals.revenue - totals.profit
-  return { stockValue, salesRevenue: totals.revenue, netProfit: totals.profit, salesExcludingProfit, total: stockValue + salesExcludingProfit }
+  return { range, stockValue, salesRevenue: totals.revenue, netProfit: totals.profit, salesExcludingProfit, total: stockValue + salesExcludingProfit }
 }
 
 export function buildBusinessAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], batches: InventoryBatch[], range: DateRange | null, now = new Date()) {

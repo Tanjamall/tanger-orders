@@ -25,12 +25,19 @@ const orders = [
   { ...base, id: 'o4', client: 'Pending', status: 'Confirmed', createdAt: '2026-09-07T12:00:00Z', items: [{ productId: 'p2', quantity: 1, unitPrice: 100 }], deliveryCharge: 10, otherExpense: 0 },
 ]
 
-test('current capital uses all delivered sales, stock at cost and all recorded expenses without counting bundles twice', () => {
+test('current capital uses only this month sales and expenses, plus current stock without counting bundles twice', () => {
   const catalog = [...products, { id: 'bundle', name: 'Set', cost: 999, price: 200, stock: 99, lowStockAt: 1, components: [{ productId: 'p1', quantity: 1 }, { productId: 'p2', quantity: 1 }] }]
   const later = { ...orders[1], id: 'later', deliveredAt: '2026-10-07T12:00:00Z' }
-  const result = buildCapitalAnalytics([...orders, later], catalog, employees, [{ date: '2026-09-08', amount: 12.5 }, { date: '2026-10-08', amount: 20 }])
-  // Stock 270 + revenue 400 - profit 172.5 = 497.5; pending/canceled orders contribute no sales.
-  assert.deepEqual(result, { stockValue: 270, salesRevenue: 400, netProfit: 172.5, salesExcludingProfit: 227.5, total: 497.5 })
+  const future = { ...later, id: 'future', deliveredAt: '2026-10-09T12:00:00Z' }
+  const dailyCosts = [{ date: '2026-09-08', amount: 12.5 }, { date: '2026-10-08', amount: 20 }, { date: '2026-10-09', amount: 100 }]
+  const result = buildCapitalAnalytics([...orders, later, future], catalog, employees, dailyCosts, new Date('2026-10-08T12:00:00Z'))
+  // Stock 270 + October sales 100 - October net profit 40 = 330.
+  // September, future deliveries/expenses, and pending/canceled sales are excluded.
+  assert.deepEqual(result, { range: { start: '2026-10-01', end: '2026-10-08' }, stockValue: 270, salesRevenue: 100, netProfit: 40, salesExcludingProfit: 60, total: 330 })
+  const september = buildCapitalAnalytics([...orders, later], catalog, employees, dailyCosts, new Date('2026-09-30T12:00:00Z'))
+  assert.equal(september.salesRevenue, 300)
+  assert.equal(september.netProfit, 132.5)
+  assert.equal(september.total, 437.5)
   for (const range of [null, { start: '2026-09-01', end: '2026-09-30' }, { start: '2026-10-01', end: '2026-10-08' }]) {
     assert.equal(buildBusinessAnalytics([...orders, later], catalog, employees, [], range).stockValue, result.stockValue)
   }
@@ -39,8 +46,20 @@ test('current capital uses all delivered sales, stock at cost and all recorded e
 test('capital handles empty history, decimal stock costs and net losses', () => {
   assert.equal(buildCapitalAnalytics([], [], []).total, 0)
   const stock = [{ ...products[0], stock: 2, cost: 40.25 }]
-  const result = buildCapitalAnalytics([], stock, [], [{ date: '2026-10-08', amount: 12.5 }])
-  assert.deepEqual(result, { stockValue: 80.5, salesRevenue: 0, netProfit: -12.5, salesExcludingProfit: 12.5, total: 93 })
+  const result = buildCapitalAnalytics([], stock, [], [{ date: '2026-10-08', amount: 12.5 }], new Date('2026-10-08T12:00:00Z'))
+  assert.deepEqual(result, { range: { start: '2026-10-01', end: '2026-10-08' }, stockValue: 80.5, salesRevenue: 0, netProfit: -12.5, salesExcludingProfit: 12.5, total: 93 })
+})
+
+test('capital month rolls over in Casablanca time and excludes the previous month', () => {
+  const delivered = { ...orders[1], deliveredAt: '2026-09-30T23:15:00Z' }
+  const costs = [{ date: '2026-10-01', amount: 20 }]
+  const october = buildCapitalAnalytics([delivered], products, employees, costs, new Date('2026-09-30T23:30:00Z'))
+  assert.deepEqual(october.range, { start: '2026-10-01', end: '2026-10-01' })
+  assert.equal(october.total, 330)
+  const november = buildCapitalAnalytics([delivered], products, employees, costs, new Date('2026-11-01T12:00:00Z'))
+  assert.equal(november.salesRevenue, 0)
+  assert.equal(november.netProfit, 0)
+  assert.equal(november.total, 270)
 })
 
 test('shared daily delivery is deducted once, without changing product profitability or order counts', () => {
