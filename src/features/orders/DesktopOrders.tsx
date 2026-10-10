@@ -1,3 +1,4 @@
+import { orderItemName } from '../../domain/variants'
 import { whatsappNumber } from '../../domain/orders'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
@@ -150,7 +151,7 @@ type DesktopOrderRowProps = {
 }
 
 function DesktopOrderRow({ order, selected, highlighted, products, members, onSelect, onStatus, onEdit, onDelete }: DesktopOrderRowProps) {
-  const productLines = order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')
+  const productLines = order.items.map((item) => `${orderItemName(item, products)} ×${item.quantity}`).join(', ')
   const productCodes = order.items.map((item) => products.find((product) => product.id === item.productId)?.id.toUpperCase() ?? item.productId.toUpperCase()).join(' · ')
   const assignee = members.find((member) => member.id === order.assignedTo)?.display_name || order.assignedTo || 'Unassigned'
   const total = order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
@@ -181,7 +182,7 @@ function DesktopOrderDetail({ order, products, members, confirmationEmployees, o
     <header><div><span>Order</span><b>#{order.id.slice(0, 8).toUpperCase()}</b></div><StatusSelector order={order} onStatus={onStatus} detail /></header>
     <section className="desktop-detail-customer"><span>Customer</span><h2>{order.client}</h2><a href={`https://wa.me/${whatsappNumber(order.phone)}`} target="_blank" rel="noreferrer">{order.phone}<ArrowSquareOut /></a></section>
     <section className="desktop-detail-block"><span>Delivery address</span><p>{order.address}</p>{order.locationUrl?.trim() && <a href={navigationUrl(order)} target="_blank" rel="noreferrer"><MapPin />Open in maps<ArrowSquareOut /></a>}</section>
-    <section className="desktop-detail-block"><span>Products</span>{order.items.map((item) => <div className="desktop-detail-line" key={`${order.id}-${item.productId}`}><p>{products.find((product) => product.id === item.productId)?.name ?? 'Product'} <small>×{item.quantity}</small></p><b>{money(item.quantity * item.unitPrice)}</b></div>)}<div className="desktop-detail-line detail-total"><p>Total</p><b>{money(total)}</b></div></section>
+    <section className="desktop-detail-block"><span>Products</span>{order.items.map((item) => <div className="desktop-detail-line" key={`${order.id}-${item.productId}`}><p>{orderItemName(item, products)} <small>×{item.quantity}</small></p><b>{money(item.quantity * item.unitPrice)}</b></div>)}<div className="desktop-detail-line detail-total"><p>Total</p><b>{money(total)}</b></div></section>
     <section className="desktop-detail-grid"><div><span>Payment</span><b>{order.paymentStatus}</b></div><div><span>Assignee</span><b>{assignee}</b></div><div><span>Confirmed by</span><b>{confirmer}</b></div><div><span>Created</span><b>{shortDate(eventDateKey(order.createdAt))}</b></div>{order.status === 'Delivered' && <div><span>Delivered</span><b>{order.deliveredAt ? shortDate(eventDateKey(order.deliveredAt)) : 'Date unavailable'}</b></div>}</section>
     {order.notes?.trim() && <section className="desktop-detail-note"><NoteBlank /><div><span>Note</span><p>{order.notes}</p></div></section>}
     <footer><button className="desktop-edit-order" onClick={() => onEdit(order)}><PencilSimple />Edit order</button><button className="desktop-delete-order" disabled={deleteDisabled} title={deleteLabel} onClick={() => onDelete(order)}><Trash />{deleteDisabled ? 'Delivered · cannot delete' : 'Delete order'}</button>{deleteDisabled && <small>Stock has already left inventory and cannot be restored.</small>}</footer>

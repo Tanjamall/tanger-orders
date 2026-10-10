@@ -206,7 +206,7 @@ export function productHistory(productId: string, orders: Order[], products: Pro
     const units = order.items.reduce((sum, item) => sum + item.quantity, 0)
     const weight = financials.revenue ? revenue / financials.revenue : units ? items.reduce((sum, item) => sum + item.quantity, 0) / units : 0
     const shared = (financials.deliveryCost + financials.otherCost + financials.confirmationCost) * weight
-    events.push({ id: `order-${order.id}`, date, label: order.status === 'Delivered' ? 'Sale' : order.status, detail: order.client, quantity: items.reduce((sum, item) => sum + item.quantity, 0), amount: revenue, profit: order.status === 'Delivered' ? revenue - cost - shared : undefined })
+    events.push({ id: `order-${order.id}`, date, label: order.status === 'Delivered' ? 'Sale' : order.status, detail: [order.client, ...items.map(item => item.variantLabel).filter(Boolean)].join(' · '), quantity: items.reduce((sum, item) => sum + item.quantity, 0), amount: revenue, profit: order.status === 'Delivered' ? revenue - cost - shared : undefined })
   }
   for (const batch of batches) {
     if (batch.productId !== productId || !rangeContains(eventDateKey(batch.receivedAt), range)) continue
@@ -259,18 +259,8 @@ export function calendarSeries(points: PeriodPoint[], range: DateRange | null, g
 }
 
 function inventoryCostValue(product: Product, products: Product[]) {
-  // Bundles share their components' stock; counting them again would inflate capital.
+  // Bundles share their components' stock; counting them again would inflate stock value.
   return product.components?.length ? 0 : bundleStock(product, products) * productCost(product, products)
-}
-
-export function buildCapitalAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], dailyCosts: DailyDeliveryCost[] = [], now = new Date()) {
-  // Recycled sales from older months are already reflected in today's stock.
-  // Only this month's sales and profit contribute, independent of report filters.
-  const range = analyticsRange('month', now)!
-  const { totals } = buildAnalytics(orders, products, employees, range, dailyCosts)
-  const stockValue = products.reduce((sum, product) => sum + inventoryCostValue(product, products), 0)
-  const salesExcludingProfit = totals.revenue - totals.profit
-  return { range, stockValue, salesRevenue: totals.revenue, netProfit: totals.profit, salesExcludingProfit, total: stockValue + salesExcludingProfit }
 }
 
 export function buildBusinessAnalytics(orders: Order[], products: Product[], employees: ConfirmationEmployee[], batches: InventoryBatch[], range: DateRange | null, now = new Date()) {

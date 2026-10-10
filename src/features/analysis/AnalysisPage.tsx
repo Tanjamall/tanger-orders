@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpRight, DownloadSimple, CalendarBlank, MagnifyingGlass, X } from '@phosphor-icons/react'
-import { analyticsChange, analyticsCsv, analyticsRange, buildAnalytics, buildBusinessAnalytics, buildCapitalAnalytics, previousAnalyticsRange, previousCalendarMonthToDateRange, productHistory, type AnalyticsPreset } from '../../domain/analytics'
+import { analyticsChange, analyticsCsv, analyticsRange, buildAnalytics, buildBusinessAnalytics, previousAnalyticsRange, previousCalendarMonthToDateRange, productHistory, type AnalyticsPreset } from '../../domain/analytics'
 import { money, rangeLabel, type ConfirmationEmployee } from '../../domain/orders'
 import type { DailyDeliveryCost, InventoryBatch, Order, Product } from '../../types'
 import { TrendChart } from './TrendChart'
@@ -58,8 +58,6 @@ export function AnalysisPage({ dailyCosts = [], orders, products, employees, bat
   const analysis = useMemo(() => buildAnalytics(orders, products, employees, range, dailyCosts), [orders, products, employees, range, dailyCosts])
   const previous = useMemo(() => comparisonRange ? buildAnalytics(orders, products, employees, comparisonRange, dailyCosts) : null, [orders, products, employees, comparisonRange, dailyCosts])
   const business = useMemo(() => buildBusinessAnalytics(orders, products, employees, batches, range), [orders, products, employees, batches, range])
-  const capitalAsOf = analyticsRange('month')!.end
-  const capital = useMemo(() => buildCapitalAnalytics(orders, products, employees, dailyCosts, new Date(`${capitalAsOf}T12:00:00Z`)), [orders, products, employees, dailyCosts, capitalAsOf])
   const history = useMemo(() => productHistory(productId, orders, products, employees, batches, historyAll ? null : range), [productId, orders, products, employees, batches, historyAll, range])
   const choices = useMemo(() => [...new Map([...products.map(p => [p.id, p.name] as const), ...orders.flatMap(o => o.items.filter(i => !products.some(p => p.id === i.productId)).map(i => [i.productId, `Archived product ${i.productId.slice(0, 8)}`] as const))])], [products, orders])
   const ranked = useMemo(() => analysis.products.filter(p => p.name.toLowerCase().includes(search.toLowerCase())).sort((a, b) => {
@@ -99,12 +97,6 @@ export function AnalysisPage({ dailyCosts = [], orders, products, employees, bat
       ['Average shared delivery per delivered order DH', totals.orders ? sharedDelivery / totals.orders : 'No delivered orders'],
       ['Product/customer profit basis', 'Excludes shared daily delivery costs'],
       ['Comparison dates', comparisonRange?.start ?? '', comparisonRange?.end ?? ''], [],
-      ['Current capital estimate', "Current stock + this month's delivered revenue - this month's recorded net profit"],
-      ['Capital sales/profit dates (Africa/Casablanca)', capital.range.start, capital.range.end],
-      ['Unsold stock at current cost DH', capital.stockValue], ["This month's delivered revenue DH", capital.salesRevenue],
-      ["This month's recorded net profit DH", capital.netProfit], ['Sales excluding net profit DH', capital.salesExcludingProfit],
-      ['Current capital estimate DH', capital.total],
-      ['Capital limitation', 'Includes recorded spending already paid; not a cash balance. Withdrawals, funding and unrecorded expenses are not tracked.'], [],
       ['Product', 'Units', 'Orders', 'Revenue DH', 'Allocated cost DH', 'Order profit DH', 'Margin %'],
       ...analysis.products.map(p => [p.name, p.units, p.orders, p.revenue, p.cost, p.profit, p.margin]), [],
       ['Delivery date', 'Revenue DH', 'Net profit DH', 'Delivered orders'], ...analysis.days.map(p => [p.key, p.revenue, p.profit, p.orders]), [],
@@ -141,13 +133,6 @@ export function AnalysisPage({ dailyCosts = [], orders, products, employees, bat
       <Metric label="Margin" value={`${displayMargin.toFixed(1)}%`} current={displayMargin} previous={page === 'overview' && previous?.totals.orders ? previous.totals.margin : undefined} margin />
     </section>}
     {page === 'overview' && <>
-      <section className="capital-summary" aria-labelledby="capital-title" aria-busy={dataState === 'loading'}>
-        <div className="capital-heading"><h2 id="capital-title">Current capital <span>Estimate</span></h2><p>Current stock + this month’s sales − this month’s net profit · {rangeLabel(capital.range)}</p></div>
-        {dataState === 'ready' ? <>
-          <dl className="capital-values"><div className="capital-total"><dt>Capital excluding net profit</dt><dd className={capital.total < 0 ? 'growth-negative' : ''}>{decimalMoney(capital.total)}</dd></div><div><dt>Unsold stock at cost</dt><dd>{decimalMoney(capital.stockValue)}</dd></div><div><dt>Sales excluding net profit</dt><dd>{decimalMoney(capital.salesExcludingProfit)}</dd></div></dl>
-          <details className="capital-breakdown"><summary>How it adds up</summary><dl><div><dt>This month’s delivered sales</dt><dd>{decimalMoney(capital.salesRevenue)}</dd></div><div><dt>Subtract this month’s net profit</dt><dd>{decimalMoney(capital.netProfit)}</dd></div><div><dt>Sales excluding net profit</dt><dd>{decimalMoney(capital.salesExcludingProfit)}</dd></div><div><dt>Add unsold stock at cost</dt><dd>{decimalMoney(capital.stockValue)}</dd></div><div className="capital-result"><dt>Current capital estimate</dt><dd>{decimalMoney(capital.total)}</dd></div></dl><p>Always uses this calendar month through today in Casablanca time, even when you change the report filter. Older sales are excluded because their money has been recycled into current stock. Stock uses current product costs; bundle components are counted once. Net profit includes individual and shared delivery costs. This is your chosen capital estimate, not a tracked cash balance.</p></details>
-        </> : <p className="capital-pending" role="status">{dataState === 'loading' ? 'Loading stock and sales to calculate capital…' : 'Capital is unavailable until the workspace finishes loading.'}</p>}
-      </section>
       <div className="overview-primary"><TrendChart key={`${range?.start}-${range?.end}`} analysis={analysis} previous={previous} range={range} previousRange={comparisonRange} />
       <section className="analysis-section growth-costs"><header><h2>Revenue to profit</h2></header><div className="cost-table" role="table" aria-label="Revenue to profit"><div className="cost-heading" role="row"><span role="columnheader">Item</span><span role="columnheader">Amount (DH)</span><span role="columnheader">Share</span><span /></div>{[['Delivered revenue', totals.revenue], ...costs, ['Net profit', totals.profit]].map(([label, raw], index) => { const value = Number(raw); return <div className={`cost-line ${index === 4 ? 'ledger-result' : ''}`} role="row" key={label}><span role="cell">{label}</span><strong role="cell">{index > 0 && index < 4 ? '−' : ''}{amount(value)}</strong><span role="cell">{percent(value, totals.revenue)}</span><progress aria-label={`${label} share`} max="100" value={totals.revenue ? Math.max(0, Math.min(100, value / totals.revenue * 100)) : 0} /></div> })}</div><p className="growth-note">Includes {decimalMoney(sharedDelivery)} shared daily delivery · {totals.orders ? decimalMoney(sharedDelivery / totals.orders) : '—'} average per delivered order.</p></section></div>
       <div className="overview-secondary"><section className="analysis-section leading-products"><header><h2>Leading products</h2><button className="report-link" onClick={() => navigate('products')}>View products <ArrowUpRight /></button></header><div className="growth-table-scroll desktop-report-table"><table className="growth-table compact-table"><thead><tr><th>Product</th><th>Units</th><th>Revenue (DH)</th><th>Profit (DH)</th></tr></thead><tbody>{analysis.products.slice(0, 3).map(p => <tr key={p.id}><th scope="row">{rowButton(p)}</th><td>{p.units}</td><td>{amount(p.revenue)}</td><td>{amount(p.profit)}</td></tr>)}</tbody></table></div>{mobileProducts(analysis.products.slice(0, 3), true)}{!analysis.products.length && <p className="analysis-empty">No delivered products in this period. Try a wider date range.</p>}</section><BusinessPanels page="overview" business={business} analysis={analysis} onProduct={openHistory} /></div>

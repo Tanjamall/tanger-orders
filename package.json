@@ -1,11 +1,11 @@
 {
   "name": "tanger-orders",
   "private": true,
-  "version": "1.5.6",
+  "version": "1.5.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test:domain": "node --test scripts/order-periods.test.mjs scripts/analytics.test.mjs scripts/session-recovery.test.mjs scripts/app-update.test.mjs",
+    "test:domain": "node --test scripts/order-periods.test.mjs scripts/analytics.test.mjs scripts/session-recovery.test.mjs scripts/app-update.test.mjs scripts/variants.test.mjs",
     "check": "tsc -p tsconfig.app.json --noUnusedLocals --noUnusedParameters --pretty false",
     "build": "npm run build:app && node scripts/package-update.mjs",
     "build:app": "tsc -b && vite build",

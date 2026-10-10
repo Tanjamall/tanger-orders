@@ -1,3 +1,5 @@
+import { ProductForm } from './features/inventory/ProductForm'
+import { formOrderItem, orderItemName, variantsFromForm, variantStockTransition } from './domain/variants'
 import { normalizePhone } from './domain/orders'
 import { DailyDeliveryModal } from './features/orders/DailyDeliveryModal'
 import { readAllPages } from './domain/pagination'
@@ -453,7 +455,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (!client) return
     await loadResource('products', async () => {
       const rows = await readAllPages((from, to) => client.from('products').select('*', { count: 'exact' }).eq('workspace_id', id).order('id').range(from, to))
-      setProducts(rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined })))
+      setProducts(rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined, variantName: row.variant_name, variants: row.variants ?? [] })))
     })
   }
 
@@ -633,7 +635,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const selectedEmployee = confirmationEmployees.find((employee) => employee.id === selectedEmployeeId)
   const selectedEmployeeOrders = selectedEmployee ? periodConfirmations.filter((order) => order.confirmationEmployeeId === selectedEmployee.id).sort((first, second) => new Date(second.confirmedAt || 0).getTime() - new Date(first.confirmedAt || 0).getTime()) : []
 
-  const matchesOrderFilter = (order: Order) => `${order.client} ${order.phone} ${order.address}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter)
+  const matchesOrderFilter = (order: Order) => `${order.client} ${order.phone} ${order.address} ${order.items.map(item => orderItemName(item, products)).join(' ')}`.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'All' || order.status === statusFilter)
   const visibleCarryover = carryoverOrders.filter(matchesOrderFilter).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   const visibleOrders = selectedRangeOrders.filter(matchesOrderFilter)
     .sort((first, second) => new Date(orderActivityDate(second)).getTime() - new Date(orderActivityDate(first)).getTime())
@@ -653,10 +655,14 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationBonus = currentOrder && isConfirmedOrder(status)
       ? currentOrder.confirmedAt ? currentOrder.confirmationBonus ?? confirmationBonusFor(employee, currentOrder.items) : confirmationBonusFor(employee, currentOrder.items)
       : 0
+    if (currentOrder && (devDemo || !supabase)) {
+      try { setProducts(variantStockTransition(products, currentOrder, { ...currentOrder, status })) } catch (cause) { setNotice((cause as Error).message); return }
+    }
     setOrders((all) => all.map((order) => order.id === id ? { ...order, status, deliveredAt, confirmedAt, confirmationBonus } : order))
     if (supabase && workspaceId) {
       const { error } = await supabase.from('orders').update({ status, delivered_at: deliveredAt ?? null, confirmed_at: confirmedAt ?? null, confirmation_bonus: confirmationBonus }).eq('id', id)
-      if (error) { setNotice(error.message); return }
+      if (error) { if (currentOrder) setOrders(all => all.map(order => order.id === id ? currentOrder : order)); setNotice(error.message); return }
+      void loadProducts(workspaceId); void loadInventory(workspaceId)
       if (becameDelivered) {
         const { data: notification, error: notificationError } = await supabase.functions.invoke('notify-new-order', { body: { orderId: id, event: 'delivered' } })
         if (notificationError) setNotice('Order delivered, but phone notifications could not be sent.')
@@ -714,17 +720,17 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const values = new FormData(form)
     const product = products.find((item) => item.id === values.get('product'))
     if (!product) return
-    const quantity = Number(values.get('quantity')) || 1
     const status = values.get('status') as Status || 'New'
     const createdAt = new Date().toISOString()
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
-    const items = [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }]
+    const items = [formOrderItem(product, values)]
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address') || ''),
       items, status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
       assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: isConfirmedOrder(status) ? confirmationBonusFor(confirmationEmployee, items) : 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
+    if (devDemo || !supabase) setProducts(variantStockTransition(products, undefined, order))
     setOrders((all) => [order, ...all])
     setShowOrder(false)
     if (!devDemo && supabase && workspaceId) {
@@ -737,22 +743,26 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   }
 
   async function addProduct(form: HTMLFormElement) {
-    const values = new FormData(form)
-    const product = { id: uid(), name: String(values.get('name')), cost: Number(values.get('cost')) || 0, price: Number(values.get('price')) || 0, stock: Number(values.get('stock')) || 0, lowStockAt: Number(values.get('lowStockAt')) || 3 }
-    setProducts((all) => [...all, product])
-    if (supabase && workspaceId) { const { error } = await supabase.from('products').insert({ workspace_id: workspaceId, name: product.name, cost: product.cost, price: product.price, stock: product.stock, low_stock_at: product.lowStockAt }); if (error) setNotice(error.message) }
-    setShowProduct(false)
+    const values = new FormData(form), variants = variantsFromForm(values)
+    let product: Product = { id: uid(), name: String(values.get('name')).trim(), cost: Number(values.get('cost')) || 0, price: Number(values.get('price')) || 0, stock: Number(values.get('stock')) || 0, lowStockAt: Number(values.get('lowStockAt') ?? 3), variantName: String(values.get('variantName') || 'Color').trim(), variants }
+    if (!devDemo && supabase && workspaceId) {
+      const { data, error } = await supabase.from('products').insert({ workspace_id: workspaceId, name: product.name, cost: product.cost, price: product.price, stock: product.stock, low_stock_at: product.lowStockAt, variant_name: product.variantName, variants }).select('id').single()
+      if (error) throw error
+      product = { ...product, id: data.id }
+      await loadInventory(workspaceId)
+    }
+    setProducts(all => all.some(entry => entry.id === product.id) ? all : [...all,product]); setShowProduct(false); setNotice(product.name + ' added.')
   }
 
-  async function restockProduct(product: Product, quantity: number, unitCost: number) {
+  async function restockProduct(product: Product, quantity: number, unitCost: number, variantId?: string) {
     if (!devDemo && supabase && workspaceId) {
-      const { error } = await supabase.rpc('restock_product', { target_product_id: product.id, added_quantity: quantity, new_unit_cost: unitCost })
-      if (error) { setNotice(error.message); return }
+      const { error } = await supabase.rpc(product.variants?.length ? 'restock_product_variant' : 'restock_product', { target_product_id: product.id, added_quantity: quantity, new_unit_cost: unitCost, ...(product.variants?.length ? { target_variant_id: variantId } : {}) })
+      if (error) throw error
       await loadCloud()
     } else {
       const receivedAt = new Date().toISOString()
       setInventoryBatches((all) => [{ id: uid(), productId: product.id, unitCost, originalQuantity: quantity, remainingQuantity: quantity, receivedAt, source: 'restock' }, ...all])
-      setProducts((all) => all.map((item) => item.id === product.id ? { ...item, stock: item.stock + quantity, cost: item.stock > 0 ? item.cost : unitCost } : item))
+      setProducts((all) => all.map((item) => item.id === product.id ? { ...item, stock: item.stock + quantity, cost: item.stock > 0 ? item.cost : unitCost, variants: item.variants?.map(v => v.id === variantId ? { ...v, stock: v.stock + quantity } : v) } : item))
     }
     setRestockingProduct(null)
     setNotice(`${product.name} restocked. The oldest units will still be costed first.`)
@@ -762,14 +772,13 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (!editingOrder) return
     const values = new FormData(form)
     const product = products.find((item) => item.id === values.get('product'))
-    const quantity = Number(values.get('quantity')) || 1
     const status = values.get('status') as Status
     const becameDelivered = editingOrder.status !== 'Delivered' && status === 'Delivered'
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const isSameConfirmer = confirmationEmployeeId === editingOrder.confirmationEmployeeId
     const confirmedAt = editingOrder.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
-    const updatedItems = product ? [{ productId: product.id, quantity, unitPrice: Number(values.get('price')) || product.price }] : editingOrder.items
+    const updatedItems = product ? [formOrderItem(product, values, editingOrder.items[0])] : editingOrder.items
     const itemsUnchanged = JSON.stringify(updatedItems) === JSON.stringify(editingOrder.items)
     const confirmationBonus = confirmationEmployeeId && isConfirmedOrder(status)
       ? isSameConfirmer && itemsUnchanged && editingOrder.confirmedAt
@@ -779,7 +788,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const updated: Order = { ...editingOrder, client: String(values.get('client')), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address')), locationUrl: String(values.get('locationUrl') || ''), items: updatedItems, assignedTo: String(values.get('assignedTo')), status, paymentStatus: values.get('paymentStatus') as PaymentStatus, deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, notes: String(values.get('notes') || ''), deliveredAt: status === 'Delivered' ? editingOrder.deliveredAt || new Date().toISOString() : undefined, confirmationEmployeeId, confirmationBonus, confirmedAt }
     if (!devDemo && supabase && workspaceId) {
       const { data: savedOrder, error } = await supabase.from('orders').update({ client_name: updated.client, phone: updated.phone, address: updated.address, location_url: updated.locationUrl || null, items: updated.items, assigned_to: updated.assignedTo || null, status: updated.status, payment_status: updated.paymentStatus, delivery_charge: updated.deliveryCharge, other_expense: updated.otherExpense, notes: updated.notes, delivered_at: updated.deliveredAt ?? null, confirmation_employee_id: updated.confirmationEmployeeId ?? null, confirmation_bonus: updated.confirmationBonus ?? 0, confirmed_at: updated.confirmedAt ?? null }).eq('id', updated.id).eq('workspace_id', workspaceId).select('*').single()
-      if (error) { setNotice(error.message); return }
+      if (error) throw error
+      void loadProducts(workspaceId); void loadInventory(workspaceId)
       const confirmedSavedOrder = orderFromRow(savedOrder)
       setOrders((all) => all.map((order) => order.id === confirmedSavedOrder.id ? confirmedSavedOrder : order))
       setNotice('Order changes saved.')
@@ -792,6 +802,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
         if (notificationError) setNotice('Order delivered, but phone notifications could not be sent.')
       }
     } else {
+      setProducts(variantStockTransition(products, editingOrder, updated))
       setOrders((all) => all.map((order) => order.id === updated.id ? updated : order))
     }
     setEditingOrder(null)
@@ -817,10 +828,15 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const values = new FormData(form)
     const correctedStock = editingProduct.components ? editingProduct.stock : Math.max(0, Math.floor(Number(values.get('stock')) || 0))
     const correctedCost = editingProduct.components ? editingProduct.cost : Math.max(0, Number(values.get('cost')) || 0)
-    const updated: Product = { ...editingProduct, name: String(values.get('name')), cost: correctedCost, price: Number(values.get('price')) || 0, stock: correctedStock, lowStockAt: Number(values.get('lowStockAt')) || 0 }
+    const updated: Product = { ...editingProduct, name: String(values.get('name')).trim(), cost: correctedCost, price: Number(values.get('price')) || 0, stock: correctedStock, lowStockAt: Number(values.get('lowStockAt')) || 0, variantName: String(values.get('variantName') || 'Color').trim(), variants: variantsFromForm(values) }
     const inventoryChanged = !editingProduct.components && (correctedStock !== editingProduct.stock || correctedCost !== editingProduct.cost)
 
     if (!devDemo && supabase && workspaceId) {
+      if (editingProduct.variants?.length || updated.variants?.length) {
+        const { error } = await supabase.rpc('save_product_variant_details', { target_product_id: updated.id, expected_stock: editingProduct.stock, expected_variants: editingProduct.variants || [], product_values: { ...updated, correctionNote: String(values.get('correctionNote') || '') } })
+        if (error) throw error
+        await loadCloud(); setEditingProduct(null); setNotice(updated.name + ' updated.'); return
+      }
       if (inventoryChanged) {
         const { error } = await supabase.rpc('correct_product_inventory', {
           target_product_id: updated.id,
@@ -990,7 +1006,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'inventory' && <section className="page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
       <section className="inventory-overview"><Cube /><b>{products.length}</b><span>items</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
-      <div className="inventory-ledger">{products.map((product) => { const low = !product.components && product.stock <= product.lowStockAt; return <article className="inventory-row" key={product.id}><span className="product-icon">{product.components ? <Stack /> : <Package />}</span><div className="inventory-copy"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle` : `FIFO cost ${money(product.cost)} · Selling ${money(product.price)}`}</p>{product.components && <p>FIFO cost {money(productCost(product, products))} · Selling {money(product.price)}</p>}</div><div className={`stock-copy ${low ? 'is-low' : ''}`}><b>{product.components ? bundleStock(product, products) : product.stock}</b><span>{product.components ? 'calculated' : low ? 'Low stock' : 'in stock'}</span></div><div className="inventory-row-actions">{!product.components && <button className="restock-icon" aria-label={`Restock ${product.name}`} onClick={() => setRestockingProduct(product)}><ArrowsClockwise /></button>}<button aria-label={`Edit ${product.name}`} onClick={() => setEditingProduct(product)}><PencilSimple /></button><button className="danger-icon" aria-label={`Delete ${product.name}`} onClick={() => void deleteProduct(product)}><Trash /></button></div></article> })}</div>
+      <div className="inventory-ledger">{products.map((product) => { const low = !product.components && product.stock <= product.lowStockAt; return <article className="inventory-row" key={product.id}><span className="product-icon">{product.components ? <Stack /> : <Package />}</span><div className="inventory-copy"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle` : `FIFO cost ${money(product.cost)} · Selling ${money(product.price)}`}</p>{product.components && <p>FIFO cost {money(productCost(product, products))} · Selling {money(product.price)}</p>}{Boolean(product.variants?.length) && <div className="variant-stock-list" aria-label={product.variantName || 'Variant stock'}>{product.variants!.map(v => <span key={v.id} className={v.stock === 0 ? 'empty' : ''}><bdi>{v.label}</bdi><b>{v.stock}</b></span>)}</div>}</div><div className={`stock-copy ${low ? 'is-low' : ''}`}><b>{product.components ? bundleStock(product, products) : product.stock}</b><span>{product.components ? 'calculated' : low ? 'Low stock' : 'in stock'}</span></div><div className="inventory-row-actions">{!product.components && <button className="restock-icon" aria-label={`Restock ${product.name}`} onClick={() => setRestockingProduct(product)}><ArrowsClockwise /></button>}<button aria-label={`Edit ${product.name}`} onClick={() => setEditingProduct(product)}><PencilSimple /></button><button className="danger-icon" aria-label={`Delete ${product.name}`} onClick={() => void deleteProduct(product)}><Trash /></button></div></article> })}</div>
       <p className="info-strip"><NoteBlank />Oldest stock is costed first. Bundle stock and cost come from the products inside it.</p>
     </section>}
 
@@ -1001,7 +1017,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
       <section className="net-profit"><span>Net profit</span><strong>{preciseMoney(profitTotals.profit - profitSharedDelivery)}</strong><p>From <b>{profitOrders.length} delivered {profitOrders.length === 1 ? 'order' : 'orders'}</b></p></section>
       <p className="period-caption">Shared delivery costs: {preciseMoney(profitSharedDelivery)} · Average per delivered order: {profitOrders.length ? `${(profitSharedDelivery / profitOrders.length).toFixed(2)} DH` : '—'}</p>
       <section className="profit-grid"><Metric icon={<Tag />} label="Sales" value={money(profitTotals.revenue)} /><Metric icon={<ClipboardText />} label="Orders" value={String(profitOrders.length)} /><Metric icon={<UsersThree />} label="Team bonuses" value={money(profitTotals.confirmationBonuses)} /><Metric icon={<ChartBar />} label="Average net" value={preciseMoney(profitOrders.length ? (profitTotals.profit - profitSharedDelivery) / profitOrders.length : 0)} /></section>
-      <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{order.deliveredAt ? `Delivered ${dateStamp(eventDateKey(order.deliveredAt))}` : "Delivery date unavailable"} · Created {dateStamp(eventDateKey(order.createdAt))}</p><span>{order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
+      <section className="ledger-section completed-sales"><h2>Completed sales</h2>{profitOrders.map((order) => { const bonus = confirmationCost(order); const confirmer = confirmationEmployees.find((employee) => employee.id === order.confirmationEmployeeId); return <article key={order.id}><CheckCircle weight="fill" /><div><h3>{order.client}</h3><p>{order.deliveredAt ? `Delivered ${dateStamp(eventDateKey(order.deliveredAt))}` : "Delivery date unavailable"} · Created {dateStamp(eventDateKey(order.createdAt))}</p><span>{order.items.map((item) => `${orderItemName(item, products)} ×${item.quantity}`).join(', ')}</span>{confirmer && <small>Confirmation: {confirmer.name} · -{money(bonus)}</small>}</div><strong>{money(order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))}</strong></article> })}{!profitOrders.length && <EmptyState icon={<ChartBar />} title="No completed sales" copy="Choose a date range with delivered orders." />}</section>
     </section>}
 
     {tab === 'analysis' && <section className="page analysis-page">
@@ -1012,7 +1028,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'employees' && <section className="page employees-page">
       {selectedEmployee ? <>
         <PageHeader title={selectedEmployee.name} subtitle={`${money(selectedEmployee.bonus)} per confirmed ${selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · ${selectedEmployee.active ? 'Active' : 'Inactive'}`} back={() => setSelectedEmployeeId(null)} actions={<><button className="square-action" aria-label={`Edit ${selectedEmployee.name}`} onClick={() => setEditingConfirmationEmployee(selectedEmployee)}><PencilSimple /></button><button className="square-action" aria-label={selectedEmployee.active ? `Pause ${selectedEmployee.name}` : `Activate ${selectedEmployee.name}`} onClick={() => void toggleConfirmationEmployee(selectedEmployee)}>{selectedEmployee.active ? <Pause /> : <Play />}</button>{appMenu()}</>} />
-        <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in this period</small></section><h3>Confirmation history · {employeePeriodLabel}</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(eventDateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${products.find((product) => product.id === item.productId)?.name ?? 'Product'} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations in this period" copy="Choose another period to see earlier work." />}</div>
+        <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><div className="employee-detail"><section><span>Confirmation bonus earned</span><strong>{money(selectedEmployeeOrders.reduce((sum, order) => sum + (order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items)), 0))}</strong><small>{money(selectedEmployee.bonus)} per confirmed {selectedEmployee.bonusBasis === 'per_item' ? 'item' : 'order'} · {selectedEmployeeOrders.length} {selectedEmployeeOrders.length === 1 ? 'order' : 'orders'} in this period</small></section><h3>Confirmation history · {employeePeriodLabel}</h3>{selectedEmployeeOrders.map((order) => <article key={order.id}><div><b>{order.client}</b><p>{dateStamp(eventDateKey(order.confirmedAt || order.createdAt))} · {order.items.map((item) => `${orderItemName(item, products)} ×${item.quantity}`).join(', ')}</p><span>{order.status}</span></div><strong>{money(order.confirmationBonus ?? confirmationBonusFor(selectedEmployee, order.items))}</strong></article>)}{!selectedEmployeeOrders.length && <EmptyState icon={<UserCheck />} title="No confirmations in this period" copy="Choose another period to see earlier work." />}</div>
       </> : <>
         <PageHeader title="Employees" subtitle="Confirmation work and bonuses" actions={<><button className="mini-primary" onClick={() => setShowConfirmationTeam(true)}><Plus />Add employee</button>{appMenu()}</>} />
         <div className="quick-range" aria-label="Confirmation performance period">{([["month", "This month"], ["last", "Last month"], ["all", "All time"]] as const).map(([period, label]) => <button key={period} className={employeePeriod === period ? "selected" : ""} aria-pressed={employeePeriod === period} onClick={() => setEmployeePeriod(period)}>{label}</button>)}</div><p className="period-caption">{employeePeriodLabel} · By confirmation date</p><p className="page-intro">Tap an employee to view confirmation history.</p>
@@ -1044,23 +1060,27 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {editingOrder && <Modal title="Edit order" close={() => setEditingOrder(null)}><OrderForm order={editingOrder} products={products} members={members} confirmationEmployees={confirmationEmployees} defaultDeliveryCharge={defaultDeliveryCharge} onSubmit={updateOrder} submitLabel="Save changes" /></Modal>}
     {showConfirmationTeam && <Modal title="Manage employees" close={() => setShowConfirmationTeam(false)}><div className="confirmation-team"><p className="team-intro">Choose whether each employee earns a fixed amount per confirmed order or per item quantity. Admin confirmations have no bonus.</p><form onSubmit={(event) => { event.preventDefault(); void addConfirmationEmployee(event.currentTarget) }} className="form"><label className="form-field"><span>Employee name</span><input required name="name" /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue="5" /></label><button className="primary full">Add employee</button></form><div className="confirmation-team-list">{confirmationEmployees.map((employee) => <article key={employee.id}><div><b>{employee.name}</b><p>{money(employee.bonus)} per confirmed {employee.bonusBasis === 'per_item' ? 'item' : 'order'} · {employee.active ? 'Active' : 'Inactive'}</p></div><div><button onClick={() => { setShowConfirmationTeam(false); setEditingConfirmationEmployee(employee) }}>Edit</button><button onClick={() => void toggleConfirmationEmployee(employee)}>{employee.active ? 'Pause' : 'Activate'}</button></div></article>)}{!confirmationEmployees.length && <p className="empty-date-range">No confirmation employees yet.</p>}</div></div></Modal>}
     {editingConfirmationEmployee && <Modal title="Edit employee" close={() => setEditingConfirmationEmployee(null)}><form onSubmit={(event) => { event.preventDefault(); void editConfirmationEmployee(event.currentTarget) }} className="form employee-edit-form"><label className="form-field"><span>Employee name</span><input required name="name" defaultValue={editingConfirmationEmployee.name} autoFocus /></label><fieldset className="bonus-basis-field"><legend>Pay bonus by</legend><div className="bonus-basis-options"><label><input type="radio" name="bonusBasis" value="per_order" defaultChecked={editingConfirmationEmployee.bonusBasis === 'per_order'} /><span><b>Per order</b><small>One bonus for each confirmed order</small></span></label><label><input type="radio" name="bonusBasis" value="per_item" defaultChecked={editingConfirmationEmployee.bonusBasis === 'per_item'} /><span><b>Per item</b><small>Multiply the bonus by item quantity</small></span></label></div></fieldset><label className="form-field"><span>Bonus amount (DH)</span><input required name="bonus" type="number" min="0" step="1" defaultValue={editingConfirmationEmployee.bonus} /></label><button className="primary full">Save changes</button></form></Modal>}
-    {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><form onSubmit={(event) => { event.preventDefault(); void addProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Product name</span><input required name="name" /></label><div className="form-row"><label className="form-field"><span>Buying cost</span><input required name="cost" type="number" /></label><label className="form-field"><span>Selling price</span><input required name="price" type="number" /></label></div><div className="form-row"><label className="form-field"><span>Opening stock</span><input required name="stock" type="number" /></label><label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" defaultValue="3" /></label></div><button className="primary full">Save product</button></form></Modal>}
-    {editingProduct && <Modal title={`Edit ${editingProduct.components ? 'bundle' : 'product'}`} close={() => setEditingProduct(null)}><form onSubmit={(event) => { event.preventDefault(); void updateProduct(event.currentTarget) }} className="form"><label className="form-field"><span>Name</span><input required name="name" defaultValue={editingProduct.name} /></label>{!editingProduct.components && <><div className="form-row"><label className="form-field"><span>Stock</span><input required name="stock" type="number" min="0" step="1" defaultValue={editingProduct.stock} /></label><label className="form-field"><span>Active FIFO cost</span><input required name="cost" type="number" min="0" step="0.01" defaultValue={editingProduct.cost} /></label></div><label className="form-field"><span>Correction note <small>Optional</small></span><input name="correctionNote" placeholder="e.g. Restock quantity typo" /></label><p className="form-note">Corrections apply only to unsold stock. Delivered-order costs stay unchanged.</p></>}<div className="form-row"><label className="form-field"><span>Selling price</span><input required name="price" type="number" min="0" step="0.01" defaultValue={editingProduct.price} /></label>{!editingProduct.components && <label className="form-field"><span>Low-stock warning</span><input name="lowStockAt" type="number" min="0" defaultValue={editingProduct.lowStockAt} /></label>}</div><button className="primary full">Save changes</button></form></Modal>}
-    {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost) => restockProduct(restockingProduct, quantity, unitCost)} />}
-    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
+    {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><ProductForm onSubmit={addProduct} /></Modal>}
+    {editingProduct && <Modal title={editingProduct.components ? 'Edit bundle' : 'Edit product'} close={() => setEditingProduct(null)}><ProductForm product={editingProduct} usedVariantIds={orders.flatMap(order => order.items.filter(item => item.productId === editingProduct.id && item.variantId).map(item => item.variantId!))} inBundle={products.some(p => p.components?.some(part => part.productId === editingProduct.id))} onSubmit={updateProduct} /></Modal>}
+    {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost, variantId) => restockProduct(restockingProduct, quantity, unitCost, variantId)} />}
+    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components && !product.variants?.length).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
     {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank"><NavigationArrow />Navigate</a></article>)}</div></Modal>}
     {showExitHint && <div className="exit-hint" role="status" aria-live="polite">Press back again to exit</div>}
   </main>
 }
 
-function RestockModal({ product, batches, close, onSubmit }: { product: Product; batches: InventoryBatch[]; close: () => void; onSubmit: (quantity: number, unitCost: number) => Promise<void> }) {
+function RestockModal({ product, batches, close, onSubmit }: { product: Product; batches: InventoryBatch[]; close: () => void; onSubmit: (quantity: number, unitCost: number, variantId?: string) => Promise<void> }) {
+  const [variantId, setVariantId] = useState('')
+  const [restockError, setRestockError] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [unitCost, setUnitCost] = useState(product.cost)
   const [busy, setBusy] = useState(false)
   const queuedCost = product.stock > 0 && unitCost !== product.cost
   const recentBatches = [...batches].sort((first, second) => new Date(second.receivedAt).getTime() - new Date(first.receivedAt).getTime()).slice(0, 4)
   return <Modal title={`Restock ${product.name}`} close={close}>
-    <form className="form restock-form" onSubmit={(event) => { event.preventDefault(); if (quantity <= 0 || unitCost < 0) return; setBusy(true); void onSubmit(quantity, unitCost).finally(() => setBusy(false)) }}>
+    <form className="form restock-form" onSubmit={(event) => { event.preventDefault(); if (quantity <= 0 || unitCost < 0) return; setBusy(true); setRestockError(''); void onSubmit(quantity, unitCost, variantId).catch(cause => setRestockError((cause as Error).message)).finally(() => setBusy(false)) }}>
+      {Boolean(product.variants?.length) && <label className="form-field"><span>{product.variantName || 'Variant'} to restock</span><select required value={variantId} onChange={event => setVariantId(event.target.value)}><option value="">Choose {product.variantName?.toLowerCase() || 'variant'}…</option>{product.variants!.map(v => <option key={v.id} value={v.id}>{v.label} · {v.stock} in stock</option>)}</select></label>}
+      {restockError && <p className="variant-form-error" role="alert">{restockError}</p>}
       <section className="restock-summary"><div><span>Current stock</span><strong>{product.stock}</strong></div><i /><div><span>Active FIFO cost</span><strong>{money(product.cost)}</strong></div></section>
       <div className="form-row"><label className="form-field"><span>Quantity received</span><input required type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(Math.max(0, Number(event.target.value)))} /></label><label className="form-field"><span>Buying cost per unit</span><input required type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(Math.max(0, Number(event.target.value)))} /></label></div>
       <section className={`fifo-preview ${queuedCost ? 'cost-queued' : ''}`}><ArrowsClockwise /><div><b>{product.stock + quantity} units after restock</b><p>{queuedCost ? `${product.stock} existing units will keep their earlier costs. The ${money(unitCost)} cost starts only after they are sold.` : product.stock > 0 ? `This batch joins the queue behind ${product.stock} existing units.` : `The ${money(unitCost)} cost becomes active immediately.`}</p></div><strong>{money(quantity * unitCost)}</strong></section>

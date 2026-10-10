@@ -1,6 +1,8 @@
 export type Status = 'New' | 'Confirmed' | 'Out for delivery' | 'Delivered' | 'Canceled'
 export type PaymentStatus = 'Pay on delivery' | 'Paid' | 'Unpaid'
 
+export type ProductVariant = { id: string; label: string; stock: number }
+
 export type Product = {
   id: string
   name: string
@@ -9,6 +11,8 @@ export type Product = {
   stock: number
   lowStockAt: number
   components?: { productId: string; quantity: number }[]
+  variantName?: string
+  variants?: ProductVariant[]
 }
 
 export type InventoryBatch = {
@@ -21,7 +25,7 @@ export type InventoryBatch = {
   source: 'opening_balance' | 'restock' | 'legacy_delivery' | 'correction'
 }
 
-export type OrderItem = { productId: string; quantity: number; unitPrice: number; costTotal?: number }
+export type OrderItem = { productId: string; quantity: number; unitPrice: number; costTotal?: number; variantId?: string; variantLabel?: string; variantName?: string }
 export type Order = {
   id: string
   client: string
