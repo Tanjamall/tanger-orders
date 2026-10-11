@@ -1,17 +1,21 @@
 begin;
 do $$ declare u uuid; begin select user_id into u from public.workspace_members limit 1; perform set_config('request.jwt.claim.sub',u::text,true); perform set_config('request.jwt.claims',jsonb_build_object('sub',u,'role','authenticated')::text,true); end $$;
 set local role authenticated;
-do $$ declare w uuid; p uuid; pending uuid; delivered uuid; rejected boolean; begin
+do $$ declare w uuid; p uuid; pending uuid; delivered uuid; preorder uuid; black_preorder uuid; rejected boolean; begin
  select private.current_workspace_id() into w;
  insert into public.products(workspace_id,name,cost,price,stock,variants) values(w,'__variant_availability_test__',40,100,1,'[{"id":"red","label":"Red","stock":1},{"id":"black","label":"Black","stock":0}]') returning id into p;
+ insert into public.orders(workspace_id,client_name,phone,address,status,items) values(w,'__variant_availability_test__','','','New',jsonb_build_array(jsonb_build_object('productId',p,'variantId','black','quantity',10,'unitPrice',100))) returning id into preorder;
+ update public.orders set status='Confirmed',items=jsonb_build_array(jsonb_build_object('productId',p,'variantId','black','quantity',20,'unitPrice',100)) where id=preorder;
+ if (select stock from public.products where id=p)<>1 then raise exception 'Preorder changed stock'; end if;
  rejected:=false;
- begin insert into public.orders(workspace_id,client_name,phone,address,status,items) values(w,'__variant_availability_test__','','','New',jsonb_build_array(jsonb_build_object('productId',p,'variantId','black','quantity',1,'unitPrice',100))); exception when others then if sqlerrm not like '%Out of stock%' then raise; end if; rejected:=true; end;
- if not rejected then raise exception 'Out-of-stock pending variant was accepted'; end if;
+ begin update public.orders set status='Delivered' where id=preorder; exception when others then if sqlerrm not like '%Out of stock%' then raise; end if; rejected:=true; end;
+ if not rejected then raise exception 'Out-of-stock preorder was delivered'; end if;
+ black_preorder:=preorder;
+ insert into public.orders(workspace_id,client_name,phone,address,status,items) values(w,'__variant_availability_test__','','','Confirmed',jsonb_build_array(jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100),jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100))) returning id into preorder;
  rejected:=false;
- begin insert into public.orders(workspace_id,client_name,phone,address,status,items) values(w,'__variant_availability_test__','','','Confirmed',jsonb_build_array(jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100),jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100))); exception when others then if sqlerrm not like '%Only 1 left%' then raise; end if; rejected:=true; end;
- if not rejected then raise exception 'Duplicate lines exceeded current stock'; end if;
+ begin update public.orders set status='Delivered' where id=preorder; exception when others then if sqlerrm not like '%Only 1 left%' then raise; end if; rejected:=true; end;
+ if not rejected then raise exception 'Duplicate preorder lines exceeded stock on delivery'; end if;
  insert into public.orders(workspace_id,client_name,phone,address,status,items) values(w,'__variant_availability_test__','','','Confirmed',jsonb_build_array(jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100))) returning id into pending;
- if (select stock from public.products where id=p)<>1 then raise exception 'Pending stock was deducted'; end if;
  insert into public.orders(workspace_id,client_name,phone,address,status,items) values(w,'__variant_availability_test__','','','Delivered',jsonb_build_array(jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100))) returning id into delivered;
  update public.orders set notes='Existing pending order remains editable' where id=pending;
  update public.orders set notes='Existing delivered order remains editable' where id=delivered;
@@ -22,6 +26,9 @@ do $$ declare w uuid; p uuid; pending uuid; delivered uuid; rejected boolean; be
  begin update public.orders set status='Delivered' where id=pending; exception when others then if sqlerrm not like '%Out of stock%' then raise; end if; rejected:=true; end;
  if not rejected then raise exception 'Sold-out pending order was delivered'; end if;
  update public.orders set status='Canceled' where id=pending;
- if (select stock from public.products where id=p)<>0 then raise exception 'Validation or pending cancellation changed stock'; end if;
+ if (select stock from public.products where id=p)<>0 then raise exception 'Pending cancellation changed stock'; end if;
+ perform public.restock_product_variant(p,'black',20,40);
+ update public.orders set status='Delivered' where id=black_preorder;
+ if (select stock from public.products where id=p)<>0 then raise exception 'Restocked preorder did not consume its own variant'; end if;
 end $$;
 rollback;

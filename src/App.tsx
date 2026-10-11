@@ -723,7 +723,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const items = formOrderItems(products, values)
-    validateOrderVariantStock(products, items)
+    validateOrderVariantStock(products, items, undefined, status)
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address') || ''),
       items, status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
