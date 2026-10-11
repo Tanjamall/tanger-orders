@@ -41,15 +41,15 @@ export function OrderForm({ order, products, members, confirmationEmployees, def
     : people.map((person) => ({ value: person, label: person }))
 
   return <form onSubmit={(event) => { event.preventDefault(); if (submitting) return; setSubmitting(true); setError(''); void onSubmit(event.currentTarget).catch(cause => setError((cause as Error).message)).finally(() => setSubmitting(false)) }} className="form">
-    <label className="form-field"><span>Customer name</span><input required name="client" defaultValue={order?.client} /></label>
-    <label className="form-field"><span>WhatsApp number</span><input required name="phone" defaultValue={order?.phone} /></label>
-    <label className="form-field"><span>Address <small>Arabic or English</small></span><input required name="address" defaultValue={order?.address} /></label>
-    <label className="form-field"><span>Google Maps link <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label>
+    <div className="form-row"><label className="form-field"><span>Customer name</span><input required name="client" defaultValue={order?.client} /></label>
+    <label className="form-field"><span>WhatsApp number</span><input required name="phone" defaultValue={order?.phone} /></label></div>
+    <div className="form-row"><label className="form-field"><span>Address</span><input required name="address" defaultValue={order?.address} /></label>
+    <label className="form-field"><span>Maps link <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label></div>
     <OrderItemsEditor order={order} products={products} />
     <div className="form-row"><label className="form-field"><span>Delivery person</span><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select></label><label className="form-field"><span>Delivery expense</span><input name="deliveryCharge" type="number" min="0" step="0.01" defaultValue={order?.deliveryCharge ?? defaultDeliveryCharge} /></label></div>
     <div className="form-row"><label className="form-field"><span>Order status</span><select name="status" defaultValue={order?.status || 'New'}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="form-field"><span>Payment status</span><select name="paymentStatus" defaultValue={order?.paymentStatus || 'Pay on delivery'}>{paymentStatuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
-    <label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per {employee.bonusBasis === 'per_item' ? 'item' : 'order'}</option>)}</select></label>
-    <label className="form-field"><span>Other expense <small>Optional</small></span><input name="otherExpense" type="number" defaultValue={order?.otherExpense} /></label>
+    <div className="form-row"><label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per {employee.bonusBasis === 'per_item' ? 'item' : 'order'}</option>)}</select></label>
+    <label className="form-field"><span>Other expense <small>Optional</small></span><input name="otherExpense" type="number" defaultValue={order?.otherExpense} /></label></div>
     <label className="form-field"><span>Note</span><textarea name="notes" defaultValue={order?.notes} /></label>
     {error && <p className="variant-form-error" role="alert">{error}</p>}
     <button className="primary full" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
