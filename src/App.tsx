@@ -1,3 +1,4 @@
+import { InventoryGrid } from './features/inventory/InventoryGrid'
 import { ProductForm } from './features/inventory/ProductForm'
 import { formOrderItems, orderItemName, variantsFromForm, variantStockTransition } from './domain/variants'
 import { normalizePhone } from './domain/orders'
@@ -25,7 +26,6 @@ import {
   MagnifyingGlass,
   NavigationArrow,
   NoteBlank,
-  Package,
   Pause,
   PencilSimple,
   Play,
@@ -61,7 +61,6 @@ import { AnalysisPage } from './features/analysis/AnalysisPage'
 import { OrderCard, OrderForm } from './features/orders/OrderComponents'
 import { distanceKm, mapCoordinates, resolveLocation, type Coordinates } from './domain/locations'
 import {
-  bundleStock,
   confirmationBonusFor,
   carriedOrders,
   eventDateKey,
@@ -84,7 +83,6 @@ import {
   normalizeStatus,
   openingBatches,
   orderFilters,
-  productCost,
   rangeLabel,
   shortDate,
   uid,
@@ -1004,10 +1002,10 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'orders' && <DesktopOrdersView dateControls={<DateRangePresets value={orderRange} presets={orderPresetRanges} onChange={setOrderRange} onCustom={() => setShowOrderCalendar(true)} customOpen={showOrderCalendar} label="Orders period" />} dailyDeliveryAction={<button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost{rangeSharedDelivery > 0 ? ` · ${preciseMoney(rangeSharedDelivery)} this period` : ''}</button>} orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
-    {tab === 'inventory' && <section className="page">
+    {tab === 'inventory' && <section className="page inventory-page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
       <section className="inventory-overview"><Cube /><b>{products.length}</b><span>items</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
-      <div className="inventory-ledger">{products.map((product) => { const low = !product.components && product.stock <= product.lowStockAt; return <article className="inventory-row" key={product.id}><span className="product-icon">{product.components ? <Stack /> : <Package />}</span><div className="inventory-copy"><h3>{product.name}</h3><p>{product.components ? `${product.components.length} products in bundle` : `FIFO cost ${money(product.cost)} · Selling ${money(product.price)}`}</p>{product.components && <p>FIFO cost {money(productCost(product, products))} · Selling {money(product.price)}</p>}{Boolean(product.variants?.length) && <div className="variant-stock-list" aria-label={product.variantName || 'Variant stock'}>{product.variants!.map(v => <span key={v.id} className={v.stock === 0 ? 'empty' : ''}><bdi>{v.label}</bdi><b>{v.stock}</b></span>)}</div>}</div><div className={`stock-copy ${low ? 'is-low' : ''}`}><b>{product.components ? bundleStock(product, products) : product.stock}</b><span>{product.components ? 'calculated' : low ? 'Low stock' : 'in stock'}</span></div><div className="inventory-row-actions">{!product.components && <button className="restock-icon" aria-label={`Restock ${product.name}`} onClick={() => setRestockingProduct(product)}><ArrowsClockwise /></button>}<button aria-label={`Edit ${product.name}`} onClick={() => setEditingProduct(product)}><PencilSimple /></button><button className="danger-icon" aria-label={`Delete ${product.name}`} onClick={() => void deleteProduct(product)}><Trash /></button></div></article> })}</div>
+      <InventoryGrid products={products} onRestock={setRestockingProduct} onEdit={setEditingProduct} onDelete={product => void deleteProduct(product)} />
       <p className="info-strip"><NoteBlank />Oldest stock is costed first. Bundle stock and cost come from the products inside it.</p>
     </section>}
 

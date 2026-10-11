@@ -1,0 +1,63 @@
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ArrowsClockwise, DotsThree, PencilSimple, Stack, Trash } from '@phosphor-icons/react'
+import { bundleStock, money, productCost } from '../../domain/orders'
+import type { Product } from '../../types'
+import './inventory-grid.css'
+
+type Props = { products: Product[]; onRestock: (product: Product) => void; onEdit: (product: Product) => void; onDelete: (product: Product) => void }
+type Menu = { product: Product; left: number; top: number; trigger: HTMLButtonElement }
+
+export function InventoryGrid({ products, onRestock, onEdit, onDelete }: Props) {
+  const [menu, setMenu] = useState<Menu | null>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const grid = useRef<HTMLDivElement>(null)
+  const close = (restoreFocus = false) => { if (restoreFocus) menu?.trigger.focus(); setMenu(null) }
+  useEffect(() => {
+    if (!menu) return
+    panel.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const dismiss = (event: PointerEvent) => { if (!panel.current?.contains(event.target as Node) && !menu.trigger.contains(event.target as Node)) setMenu(null) }
+    const scroll = (event: Event) => { if (!panel.current?.contains(event.target as Node)) setMenu(null) }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { menu.trigger.focus(); setMenu(null) } }
+    const resize = () => setMenu(null)
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('scroll', scroll, true)
+    document.addEventListener('keydown', escape)
+    window.addEventListener('resize', resize)
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('scroll', scroll, true); document.removeEventListener('keydown', escape); window.removeEventListener('resize', resize) }
+  }, [menu])
+  const open = (product: Product, trigger: HTMLButtonElement) => {
+    if (menu?.product.id === product.id) { close(); return }
+    const rect = trigger.getBoundingClientRect()
+    const height = product.components ? 104 : 148
+    setMenu({ product, trigger, left: Math.max(8, Math.min(rect.right - 176, window.innerWidth - 184)), top: rect.bottom + height + 8 > window.innerHeight - 70 ? Math.max(8, rect.top - height - 4) : rect.bottom + 4 })
+  }
+  const act = (action: (product: Product) => void) => { if (!menu) return; const product = menu.product; close(true); action(product) }
+  const portalRoot = grid.current?.closest('.app-shell')
+  return <div className="inventory-grid" ref={grid}>
+    {products.map(product => {
+      const stock = product.components ? bundleStock(product, products) : product.stock
+      const low = !product.components && stock <= product.lowStockAt
+      return <article className={'inventory-tile' + (low ? ' low-stock' : '')} key={product.id}>
+        <header><h3><bdi>{product.name}</bdi></h3><button className="inventory-menu-trigger" aria-label={'Actions for ' + product.name} aria-haspopup="menu" aria-expanded={menu?.product.id === product.id} onClick={event => open(product, event.currentTarget)}><DotsThree weight="bold" /></button></header>
+        {product.components && <span className="inventory-bundle-label"><Stack />Bundle · {product.components.length} products</span>}
+        <dl className="inventory-prices"><div><dt>Selling</dt><dd>{money(product.price)}</dd></div><div><dt>FIFO cost</dt><dd>{money(product.components ? productCost(product, products) : product.cost)}</dd></div></dl>
+        <div className="inventory-tile-stock"><strong>{stock}</strong><span>{stock === 0 ? 'Out of stock' : low ? 'Low stock' : product.components ? 'bundles available' : 'in stock'}</span></div>
+        {Boolean(product.variants?.length) && <details className="inventory-tile-variants"><summary>{product.variants!.length} {(product.variantName || 'Variant').toLowerCase()} options</summary><div>{product.variants!.map(v => <span key={v.id}><bdi>{v.label}</bdi><b>{v.stock}</b></span>)}</div></details>}
+      </article>
+    })}
+    {menu && portalRoot && createPortal(<div className="inventory-action-menu" ref={panel} role="menu" aria-label={'Actions for ' + menu.product.name} style={{ left: menu.left, top: menu.top }} onKeyDown={event => {
+      if (event.key === 'Tab') { close(); return }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+      event.preventDefault()
+      const buttons = [...panel.current!.querySelectorAll<HTMLButtonElement>('button')]
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+      buttons[next]?.focus()
+    }}>
+      {!menu.product.components && <button role="menuitem" onClick={() => act(onRestock)}><ArrowsClockwise />Restock</button>}
+      <button role="menuitem" onClick={() => act(onEdit)}><PencilSimple />Edit</button>
+      <button role="menuitem" className="inventory-menu-delete" onClick={() => act(onDelete)}><Trash />Delete</button>
+    </div>, portalRoot)}
+  </div>
+}
