@@ -236,3 +236,10 @@ test('analytics presets follow Casablanca at midnight and changing page counts f
   let calls = 0
   await assert.rejects(readAllPages(async () => ({ data: [{ id: calls++ }], error: null, count: calls === 1 ? 3 : 4 })), /History changed/)
 })
+
+test('archiving products preserves historical analytics and product identities',()=>{
+ const range={start:'2026-09-01',end:'2026-09-30'}
+ const archived=products.map(product=>({...product,archived:true}))
+ assert.deepEqual(buildAnalytics(orders,archived,employees,range),buildAnalytics(orders,products,employees,range))
+ assert.deepEqual(buildBusinessAnalytics(orders,archived,[],employees,range),buildBusinessAnalytics(orders,products,[],employees,range))
+})

@@ -10,6 +10,7 @@ export type Product = {
   price: number
   stock: number
   lowStockAt: number
+  archived?: boolean
   components?: { productId: string; quantity: number }[]
   variantName?: string
   variants?: ProductVariant[]

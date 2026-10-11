@@ -23,6 +23,7 @@ export function orderItemName(item: OrderItem, products: Product[]) {
 }
 
 export function formOrderItem(product: Product, values: FormData, previous?: OrderItem): OrderItem {
+  if (product.archived && previous?.productId !== product.id) throw new Error('This product is archived. Restore it before adding it to a new order.')
   const quantity = Number(values.get('quantity'))
   if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Quantity must be a whole number, greater than zero.')
   const variantId = String(values.get('variantId') || '')

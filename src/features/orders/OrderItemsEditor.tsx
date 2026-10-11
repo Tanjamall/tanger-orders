@@ -9,7 +9,7 @@ type Line = OrderItemDraft & { key: string }
 export function OrderItemsEditor({ order, products }: { order?: Order; products: Product[] }) {
   const [lines, setLines] = useState<Line[]>(() => order?.items.length
     ? order.items.map((item, index) => ({ key: uid(), productId: item.productId, variantId: item.variantId || '', quantity: String(item.quantity), price: String(item.unitPrice), previousIndex: index }))
-    : [{ key: uid(), productId: products[0]?.id || '', variantId: '', quantity: '1', price: '' }])
+    : [{ key: uid(), productId: products.find(p => !p.archived)?.id || '', variantId: '', quantity: '1', price: '' }])
   const change = (key: string, update: Partial<Line>) => setLines(all => all.map(line => line.key === key ? { ...line, ...update } : line))
   const available = (line: Line, variantId: string, stock: number) => {
     const returned = order?.status === 'Delivered' ? order.items.filter(item => item.productId === line.productId && (item.variantId || '') === variantId).reduce((sum, item) => sum + item.quantity, 0) : 0
@@ -30,7 +30,7 @@ export function OrderItemsEditor({ order, products }: { order?: Order; products:
         <div className="order-item-product">
           <label className="form-field"><span>Product</span><select required value={line.productId} onChange={event => change(line.key, { productId: event.target.value, variantId: '', price: '' })}>
             {!product && <option value={line.productId}>{previous ? 'Archived product' : 'Choose a product'}</option>}
-            {products.map(p => <option value={p.id} key={p.id}>{p.components ? 'Bundle: ' : ''}{p.name} · {money(p.price)}</option>)}
+            {products.filter(p => !p.archived || p.id === previous?.productId).map(p => <option value={p.id} key={p.id}>{p.components ? 'Bundle: ' : ''}{p.name}{p.archived ? ' (archived)' : ''} · {money(p.price)}</option>)}
           </select></label>
           {lines.length > 1 && <button type="button" className="order-item-remove" aria-label={'Remove item ' + (index + 1)} onClick={() => setLines(all => all.filter(item => item.key !== line.key))}><Trash /></button>}
         </div>
@@ -44,7 +44,7 @@ export function OrderItemsEditor({ order, products }: { order?: Order; products:
         </div>
       </fieldset>
     })}
-    <div className="order-items-footer"><button type="button" className="order-add-item" disabled={lines.length >= 100 || !products.length} onClick={() => setLines(all => [...all, { key: uid(), productId: all.at(-1)?.productId || products[0]?.id || '', variantId: '', quantity: '1', price: '' }])}><Plus />Add item</button>
+    <div className="order-items-footer"><button type="button" className="order-add-item" disabled={lines.length >= 100 || !products.some(p => !p.archived)} onClick={() => setLines(all => [...all, { key: uid(), productId: products.find(p => !p.archived && p.id === all.at(-1)?.productId)?.id || products.find(p => !p.archived)?.id || '', variantId: '', quantity: '1', price: '' }])}><Plus />Add item</button>
     <div className="order-items-total" aria-live="polite"><span>{units} {units === 1 ? 'unit' : 'units'}</span><strong>{money(total)}</strong></div>
     </div>
   </section>

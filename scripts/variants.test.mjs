@@ -76,3 +76,10 @@ test('editing preserves every line and its history after another line is removed
  assert.throws(()=>formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'',quantity:'1',price:''}])})),/Item 1.*Choose/)
  assert.throws(()=>formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'red',quantity:'1',price:'',previousIndex:9}])}),previous),/unexpectedly/)
 })
+
+test('archived products cannot be newly selected but existing orders remain editable',()=>{
+ const archived={...product,archived:true}
+ assert.throws(()=>formOrderItem(archived,values({quantity:1,variantId:'red'})),/archived/)
+ assert.equal(formOrderItem(archived,values({quantity:2,variantId:'red',price:100}),order.items[0]).quantity,2)
+ assert.equal(orderItemName(order.items[0],[archived]),'Lamp · Red')
+})

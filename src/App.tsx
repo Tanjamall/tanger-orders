@@ -453,7 +453,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     if (!client) return
     await loadResource('products', async () => {
       const rows = await readAllPages((from, to) => client.from('products').select('*', { count: 'exact' }).eq('workspace_id', id).order('id').range(from, to))
-      setProducts(rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined, variantName: row.variant_name, variants: row.variants ?? [] })))
+      setProducts(rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map((row: any) => ({ id: row.id, name: row.name, cost: Number(row.cost), price: Number(row.price), stock: row.stock, lowStockAt: row.low_stock_at, components: row.components ?? undefined, variantName: row.variant_name, variants: row.variants ?? [], archived: row.archived === true })))
     })
   }
 
@@ -871,6 +871,20 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     setNotice(inventoryChanged ? `${updated.name} corrected. Existing delivered-order costs were not changed.` : `${updated.name} updated.`)
   }
 
+  async function toggleProductArchive(product: Product) {
+    const archived = !product.archived
+    try {
+      if (!devDemo) {
+        if (!supabase || !workspaceId) throw new Error('Connection unavailable. Please retry.')
+        const { data, error } = await supabase.from('products').update({ archived }).eq('id', product.id).eq('workspace_id', workspaceId).select('id, archived').single()
+        if (error) throw error
+        if (data.archived !== archived) throw new Error('The product could not be updated. Please retry.')
+      }
+      setProducts(all => all.map(item => item.id === product.id ? { ...item, archived } : item))
+      setNotice(product.name + (archived ? ' archived.' : ' restored.'))
+    } catch (cause) { setNotice((cause as Error).message) }
+  }
+
   async function deleteProduct(product: Product) {
     if (!window.confirm(`Delete “${product.name}”? This cannot be undone.`)) return
     setProducts((all) => all.filter((item) => item.id !== product.id))
@@ -1004,8 +1018,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     {tab === 'inventory' && <section className="page inventory-page">
       <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
-      <section className="inventory-overview"><Cube /><b>{products.length}</b><span>items</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
-      <InventoryGrid products={products} onRestock={setRestockingProduct} onEdit={setEditingProduct} onDelete={product => void deleteProduct(product)} />
+      <section className="inventory-overview"><Cube /><b>{products.filter(product => !product.archived).length}</b><span>active</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.archived && !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
+      <InventoryGrid products={products} onRestock={setRestockingProduct} onEdit={setEditingProduct} onDelete={product => void deleteProduct(product)} onArchive={product => void toggleProductArchive(product)} />
       <p className="info-strip"><NoteBlank />Oldest stock is costed first. Bundle stock and cost come from the products inside it.</p>
     </section>}
 
@@ -1062,7 +1076,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {showProduct && <Modal title="Add product" close={() => setShowProduct(false)}><ProductForm onSubmit={addProduct} /></Modal>}
     {editingProduct && <Modal title={editingProduct.components ? 'Edit bundle' : 'Edit product'} close={() => setEditingProduct(null)}><ProductForm product={editingProduct} usedVariantIds={orders.flatMap(order => order.items.filter(item => item.productId === editingProduct.id && item.variantId).map(item => item.variantId!))} inBundle={products.some(p => p.components?.some(part => part.productId === editingProduct.id))} onSubmit={updateProduct} /></Modal>}
     {restockingProduct && <RestockModal product={restockingProduct} batches={inventoryBatches.filter((batch) => batch.productId === restockingProduct.id)} close={() => setRestockingProduct(null)} onSubmit={(quantity, unitCost, variantId) => restockProduct(restockingProduct, quantity, unitCost, variantId)} />}
-    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.components && !product.variants?.length).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
+    {showBundle && <Modal title="Create bundle" close={() => setShowBundle(false)}><form onSubmit={(event) => { event.preventDefault(); void addBundle(event.currentTarget) }} className="form"><label className="form-field"><span>Bundle name</span><input required name="name" /></label><label className="form-field"><span>Bundle selling price</span><input required name="price" type="number" /></label><p className="form-note">Products inside this bundle</p>{bundleLines.map((line, index) => <div className="bundle-line" key={index}><label className="form-field"><span>Product {index + 1}</span><select value={line.productId} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}><option value="">Choose product</option>{products.filter((product) => !product.archived && !product.components && !product.variants?.length).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.stock} in stock)</option>)}</select></label><label className="form-field"><span>Quantity</span><input type="number" min="1" value={line.quantity} onChange={(event) => setBundleLines((all) => all.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: Number(event.target.value) || 1 } : item))} /></label>{bundleLines.length > 2 && <button className="remove-line" type="button" aria-label={`Remove product ${index + 1}`} onClick={() => setBundleLines((all) => all.filter((_item, lineIndex) => lineIndex !== index))}><X /></button>}</div>)}<button className="add-line" type="button" onClick={() => setBundleLines((all) => [...all, { productId: '', quantity: 1 }])}><Plus />Add another product</button><button className="primary full">Save bundle</button></form></Modal>}
     {showRoutePlan && <Modal title="Delivery route" close={() => setShowRoutePlan(false)}><div className="route-plan">{routeBusy && <p>Finding the best delivery order from your current location…</p>}{routeError && <p className="route-error">{routeError}</p>}{!routeBusy && !routeError && plannedOrders.map((order, index) => <article key={order.id}><b>{index + 1}</b><div><strong>{order.client}</strong><span>{order.address}</span></div><a href={navigationUrl(order)} target="_blank"><NavigationArrow />Navigate</a></article>)}</div></Modal>}
     {showExitHint && <div className="exit-hint" role="status" aria-live="polite">Press back again to exit</div>}
   </main>
