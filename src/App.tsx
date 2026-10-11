@@ -233,7 +233,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [dailyDeliveryCosts, setDailyDeliveryCosts] = useState<DailyDeliveryCost[]>(() => devDemo ? [] : readStored(`tanger-daily-delivery:${storageOwner}:${cachedWorkspaceId ?? 'unassigned'}`, []))
   const [showDailyDelivery, setShowDailyDelivery] = useState(false)
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<Status | 'All'>('All')
+  const [statusFilter, setStatusFilter] = useState<Status | 'All'>('Confirmed')
   const [showOrder, setShowOrder] = useState(false)
   const [editingOrder, setEditingOrder] = useState<Order | null>(null)
   const [showProduct, setShowProduct] = useState(false)
