@@ -37,7 +37,7 @@ begin
   begin
     insert into public.orders(workspace_id,client_name,phone,address,status,items)
       values(w,'__order_items_transaction_test__','','','Delivered',jsonb_build_array(jsonb_build_object('productId',p,'variantId','red','quantity',2,'unitPrice',100),jsonb_build_object('productId',p,'variantId','red','quantity',1,'unitPrice',100)));
-  exception when others then if sqlerrm not like 'Not enough%' then raise; end if; rejected:=true; end;
+  exception when others then if sqlerrm not like 'Not enough%' and sqlerrm not like '%Only % left%' and sqlerrm not like '%Out of stock%' then raise; end if; rejected:=true; end;
   if not rejected or (select stock from public.products where id=p)<>4 then raise exception 'Combined overselling did not roll back'; end if;
   update public.orders set status='Canceled' where id=o;
   if (select stock from public.products where id=p)<>5 then raise exception 'Reopening lost a variant'; end if;

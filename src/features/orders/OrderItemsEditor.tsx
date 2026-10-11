@@ -12,9 +12,10 @@ export function OrderItemsEditor({ order, products }: { order?: Order; products:
     : [{ key: uid(), productId: products.find(p => !p.archived)?.id || '', variantId: '', quantity: '1', price: '' }])
   const change = (key: string, update: Partial<Line>) => setLines(all => all.map(line => line.key === key ? { ...line, ...update } : line))
   const available = (line: Line, variantId: string, stock: number) => {
-    const returned = order?.status === 'Delivered' ? order.items.filter(item => item.productId === line.productId && (item.variantId || '') === variantId).reduce((sum, item) => sum + item.quantity, 0) : 0
+    const oldQuantity = order?.items.filter(item => item.productId === line.productId && (item.variantId || '') === variantId).reduce((sum, item) => sum + item.quantity, 0) || 0
+    const capacity = order?.status === 'Delivered' ? stock + oldQuantity : line.previousIndex !== undefined ? Math.max(stock, oldQuantity) : stock
     const other = lines.filter(item => item.key !== line.key && item.productId === line.productId && item.variantId === variantId).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
-    return Math.max(0, stock + returned - other)
+    return Math.max(0, capacity - other)
   }
   const units = lines.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0)
   const total = lines.reduce((sum, line) => sum + (Number(line.quantity) || 0) * (line.price.trim() ? Number(line.price) || 0 : products.find(p => p.id === line.productId)?.price || 0), 0)
@@ -25,6 +26,12 @@ export function OrderItemsEditor({ order, products }: { order?: Order; products:
       const product = products.find(p => p.id === line.productId)
       const previous = line.previousIndex === undefined ? undefined : order?.items[line.previousIndex]
       const legacy = previous?.productId === line.productId && !previous.variantId
+      const variant = product?.variants?.find(v => v.id === line.variantId)
+      const limit = variant ? available(line, variant.id, variant.stock) : undefined
+      const options = product?.variants?.filter(v => available(line, v.id, v.stock) > 0 || v.id === line.variantId) || []
+      const stockError = limit !== undefined && Number(line.quantity) > limit
+        ? (limit ? 'Only ' + limit + ' left for ' + variant!.label + '. Reduce the quantity.' : variant!.label + ' is out of stock. Choose another variant.')
+        : !legacy && product?.variants?.length && !options.length ? 'All variants are out of stock.' : ''
       return <fieldset className="order-item-line" key={line.key}>
         <legend>Item {index + 1}</legend>
         <div className="order-item-product">
@@ -36,12 +43,13 @@ export function OrderItemsEditor({ order, products }: { order?: Order; products:
         </div>
         <div className={'order-item-details' + (product?.variants?.length ? ' has-variants' : '')}>
           {Boolean(product?.variants?.length) && <label className="form-field"><span>{product?.variantName || 'Variant'}</span><select required={!legacy} value={line.variantId} onChange={event => change(line.key, { variantId: event.target.value })}>
-            <option value="" disabled={!legacy}>{legacy ? 'Not recorded' : 'Choose'}</option>
-            {product!.variants!.map(v => <option key={v.id} value={v.id}>{v.label} · {available(line, v.id, v.stock)} left</option>)}
+            <option value="" disabled={!legacy}>{legacy ? 'Not recorded' : options.length ? 'Choose' : 'Out of stock'}</option>
+            {options.map(v => <option key={v.id} value={v.id} disabled={available(line, v.id, v.stock) === 0}>{v.label} · {available(line, v.id, v.stock)} left</option>)}
           </select></label>}
-          <label className="form-field"><span>Qty</span><input aria-label={'Quantity for item ' + (index + 1)} required type="number" min="1" step="1" value={line.quantity} onChange={event => change(line.key, { quantity: event.target.value })} /></label>
+          <label className="form-field"><span>Qty</span><input aria-label={'Quantity for item ' + (index + 1)} required type="number" min="1" max={limit} step="1" aria-invalid={Boolean(stockError)} aria-describedby={stockError ? line.key + '-stock-error' : undefined} value={line.quantity} onChange={event => change(line.key, { quantity: event.target.value })} /></label>
           <label className="form-field"><span>Unit price (DH)</span><input type="number" min="0" step="0.01" placeholder={String(product?.price ?? 0)} value={line.price} onChange={event => change(line.key, { price: event.target.value })} /></label>
         </div>
+        {stockError && <p id={line.key + '-stock-error'} className="variant-form-error" role="alert">{stockError}</p>}
       </fieldset>
     })}
     <div className="order-items-footer"><button type="button" className="order-add-item" disabled={lines.length >= 100 || !products.some(p => !p.archived)} onClick={() => setLines(all => [...all, { key: uid(), productId: products.find(p => !p.archived && p.id === all.at(-1)?.productId)?.id || products.find(p => !p.archived)?.id || '', variantId: '', quantity: '1', price: '' }])}><Plus />Add item</button>

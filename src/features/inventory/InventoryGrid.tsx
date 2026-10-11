@@ -1,3 +1,4 @@
+import { matchesInventorySearch } from '../../domain/search'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Archive, ArrowCounterClockwise, ArrowsClockwise, DotsThree, PencilSimple, Stack, Trash } from '@phosphor-icons/react'
@@ -5,12 +6,12 @@ import { bundleStock, money, productCost } from '../../domain/orders'
 import type { Product } from '../../types'
 import './inventory-grid.css'
 
-type Props = { products: Product[]; onRestock: (product: Product) => void; onEdit: (product: Product) => void; onDelete: (product: Product) => void; onArchive: (product: Product) => void }
+type Props = { query?: string; products: Product[]; onRestock: (product: Product) => void; onEdit: (product: Product) => void; onDelete: (product: Product) => void; onArchive: (product: Product) => void }
 type Menu = { product: Product; left: number; top: number; trigger: HTMLButtonElement }
 
-export function InventoryGrid({ products, onRestock, onEdit, onDelete, onArchive }: Props) {
+export function InventoryGrid({ query = '', products, onRestock, onEdit, onDelete, onArchive }: Props) {
   const [showArchived, setShowArchived] = useState(false)
-  const visible = products.filter(product => Boolean(product.archived) === showArchived)
+  const visible = products.filter(product => Boolean(product.archived) === showArchived && matchesInventorySearch(product.name, product.variants?.map(v => v.label) || [], query))
   const [menu, setMenu] = useState<Menu | null>(null)
   const panel = useRef<HTMLDivElement>(null)
   const grid = useRef<HTMLDivElement>(null)
@@ -51,7 +52,7 @@ export function InventoryGrid({ products, onRestock, onEdit, onDelete, onArchive
       </article>
     })}
     </div>
-    {!visible.length && <p className="inventory-empty">{showArchived ? 'No archived products.' : 'No active products. Add a product or restore one from Archived.'}</p>}
+    {!visible.length && <p className="inventory-empty">{query.trim() ? 'No matching products.' : showArchived ? 'No archived products.' : 'No active products. Add a product or restore one from Archived.'}</p>}
     {menu && portalRoot && createPortal(<div className="inventory-action-menu" ref={panel} role="menu" aria-label={'Actions for ' + menu.product.name} style={{ left: menu.left, top: menu.top }} onKeyDown={event => {
       if (event.key === 'Tab') { close(); return }
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return

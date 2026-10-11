@@ -83,3 +83,22 @@ test('archived products cannot be newly selected but existing orders remain edit
  assert.equal(formOrderItem(archived,values({quantity:2,variantId:'red',price:100}),order.items[0]).quantity,2)
  assert.equal(orderItemName(order.items[0],[archived]),'Lamp · Red')
 })
+
+const { validateOrderVariantStock } = await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'))
+test('new pending orders reject unavailable variants and aggregate quantities across lines',()=>{
+ const soldOut={...product,variants:product.variants.map(v=>({...v,stock:v.id==='red'?0:v.stock}))}
+ assert.throws(()=>validateOrderVariantStock([soldOut],order.items),/Out of stock/)
+ assert.throws(()=>validateOrderVariantStock([product],[{...order.items[0],quantity:3}]),/Only 2 left/)
+ assert.throws(()=>validateOrderVariantStock([product],[order.items[0],{...order.items[0],quantity:1}]),/Only 2 left/)
+ assert.doesNotThrow(()=>validateOrderVariantStock([product],[{...order.items[0],quantity:2}]))
+ assert.equal(product.variants[0].stock,2)
+})
+test('availability credits delivered stock and preserves unchanged historical pending orders',()=>{
+ const soldOut={...product,variants:product.variants.map(v=>({...v,stock:0}))}
+ assert.doesNotThrow(()=>validateOrderVariantStock([soldOut],order.items,order,'New'))
+ assert.throws(()=>validateOrderVariantStock([soldOut],[{...order.items[0],quantity:3}],order,'New'),/Out of stock/)
+ assert.throws(()=>validateOrderVariantStock([soldOut],order.items,order,'Delivered'),/Out of stock/)
+ const delivered={...order,status:'Delivered'}
+ assert.doesNotThrow(()=>validateOrderVariantStock([soldOut],order.items,delivered,'Delivered'))
+ assert.throws(()=>validateOrderVariantStock([soldOut],[{...order.items[0],quantity:3}],delivered,'Delivered'),/Only 2 left/)
+})

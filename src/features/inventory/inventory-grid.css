@@ -72,3 +72,7 @@
  .inventory-tile { grid-template-columns:minmax(0,1fr) 44px 44px 30px 44px; gap:0 4px; }
  .inventory-tile h3 { font-size:13px; }
 }
+
+@media (max-width:480px) { .inventory-page .ledger-header { flex-wrap:wrap; } .inventory-page .header-actions { margin-left:auto; } }
+
+.inventory-add { position:absolute; z-index:80; right:20px; bottom:calc(79px + env(safe-area-inset-bottom)); } .inventory-add .ledger-fab { position:static; animation:none; } .inventory-add > .inventory-action-menu { position:absolute; right:0; bottom:calc(100% + 8px); width:190px; } @media (min-width:1000px) { .inventory-add { right:30px; bottom:28px; } }

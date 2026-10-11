@@ -1,6 +1,7 @@
+import { InventoryAddButton } from './features/inventory/InventoryAddButton'
 import { InventoryGrid } from './features/inventory/InventoryGrid'
 import { ProductForm } from './features/inventory/ProductForm'
-import { formOrderItems, orderItemName, variantsFromForm, variantStockTransition } from './domain/variants'
+import { formOrderItems, validateOrderVariantStock, orderItemName, variantsFromForm, variantStockTransition } from './domain/variants'
 import { normalizePhone } from './domain/orders'
 import { DailyDeliveryModal } from './features/orders/DailyDeliveryModal'
 import { readAllPages } from './domain/pagination'
@@ -31,7 +32,6 @@ import {
   Play,
   Plus,
   SignOut,
-  Stack,
   Tag,
   Trash,
   User,
@@ -231,6 +231,8 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   const [dailyDeliveryCosts, setDailyDeliveryCosts] = useState<DailyDeliveryCost[]>(() => devDemo ? [] : readStored(`tanger-daily-delivery:${storageOwner}:${cachedWorkspaceId ?? 'unassigned'}`, []))
   const [showDailyDelivery, setShowDailyDelivery] = useState(false)
   const [query, setQuery] = useState('')
+  const [inventoryQuery, setInventoryQuery] = useState('')
+  const [showInventorySearch, setShowInventorySearch] = useState(false)
   const [statusFilter, setStatusFilter] = useState<Status | 'All'>('Confirmed')
   const [showOrder, setShowOrder] = useState(false)
   const [editingOrder, setEditingOrder] = useState<Order | null>(null)
@@ -721,6 +723,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const items = formOrderItems(products, values)
+    validateOrderVariantStock(products, items)
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address') || ''),
       items, status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
@@ -775,6 +778,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     const isSameConfirmer = confirmationEmployeeId === editingOrder.confirmationEmployeeId
     const confirmedAt = editingOrder.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
     const updatedItems = formOrderItems(products, values, editingOrder.items)
+    validateOrderVariantStock(products, updatedItems, editingOrder, status)
     const itemsUnchanged = updatedItems.length === editingOrder.items.length && updatedItems.every((item, index) => {
       const previous = editingOrder.items[index]
       return item.productId === previous.productId && item.variantId === previous.variantId && item.quantity === previous.quantity && item.unitPrice === previous.unitPrice
@@ -1017,9 +1021,10 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
     {tab === 'orders' && <DesktopOrdersView dateControls={<DateRangePresets value={orderRange} presets={orderPresetRanges} onChange={setOrderRange} onCustom={() => setShowOrderCalendar(true)} customOpen={showOrderCalendar} label="Orders period" />} dailyDeliveryAction={<button className="daily-delivery-action" onClick={() => setShowDailyDelivery(true)}><CalendarBlank />End-of-day delivery cost{rangeSharedDelivery > 0 ? ` · ${preciseMoney(rangeSharedDelivery)} this period` : ''}</button>} orders={visibleOrders} carryoverOrders={visibleCarryover} carryoverCount={carryoverOrders.length} rangeOrders={selectedRangeOrders} highlightedOrderIds={highlightedPushOrderIds} deliveredCount={selectedRangeDelivered.length} rangeProfit={selectedRangeProfit} rangeLabelText={rangeLabel(orderRange)} products={products} members={members} confirmationEmployees={confirmationEmployees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} newOrder={() => setShowOrder(true)} menu={appMenu()} onStatus={changeStatus} onEdit={setEditingOrder} onDelete={deleteOrder} />}
 
     {tab === 'inventory' && <section className="page inventory-page">
-      <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="text-action" onClick={() => setShowBundle(true)}><Stack />Bundle</button>{appMenu()}</>} />
+      <PageHeader title="Inventory" subtitle="Products and bundles" actions={<><button className="square-action" aria-label="Search inventory" aria-expanded={showInventorySearch} onClick={() => setShowInventorySearch(value => !value)}><MagnifyingGlass /></button>{appMenu()}</>} />
       <section className="inventory-overview"><Cube /><b>{products.filter(product => !product.archived).length}</b><span>active</span><i /><WarningCircle weight="fill" /><b>{products.filter((product) => !product.archived && !product.components && product.stock <= product.lowStockAt).length}</b><span>low stock</span></section>
-      <InventoryGrid products={products} onRestock={setRestockingProduct} onEdit={setEditingProduct} onDelete={product => void deleteProduct(product)} onArchive={product => void toggleProductArchive(product)} />
+      {showInventorySearch && <label className="search-field"><MagnifyingGlass /><input autoFocus aria-label="Search inventory" value={inventoryQuery} onChange={event => setInventoryQuery(event.target.value)} placeholder="Search products or variants" /><button type="button" aria-label="Clear inventory search" onClick={() => setInventoryQuery('')}><X /></button></label>}
+      <InventoryGrid query={inventoryQuery} products={products} onRestock={setRestockingProduct} onEdit={setEditingProduct} onDelete={product => void deleteProduct(product)} onArchive={product => void toggleProductArchive(product)} />
       <p className="info-strip"><NoteBlank />Oldest stock is costed first. Bundle stock and cost come from the products inside it.</p>
     </section>}
 
@@ -1064,7 +1069,7 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
     <nav className="ledger-bottom-nav"><NavButton icon="orders" label="Orders" active={tab === 'orders'} onClick={() => setTab('orders')} /><NavButton icon="inventory" label="Inventory" active={tab === 'inventory'} onClick={() => setTab('inventory')} /><NavButton icon="profit" label="Profit" active={tab === 'profit'} onClick={() => setTab('profit')} /><NavButton icon="analysis" label="Analysis" active={tab === 'analysis'} onClick={() => setTab('analysis')} /></nav>
     {tab === 'orders' && <button className="ledger-fab mobile-only-fab" onClick={() => setShowOrder(true)}><Plus />New order</button>}
-    {tab === 'inventory' && <button className="ledger-fab inventory-fab" onClick={() => setShowProduct(true)}><Plus />Product</button>}
+    {tab === 'inventory' && <InventoryAddButton onProduct={() => setShowProduct(true)} onBundle={() => setShowBundle(true)} />}
 
     {showOrderCalendar && <DateRangeCalendar value={orderRange} onChange={setOrderRange} close={() => setShowOrderCalendar(false)} />}
     {showProfitCalendar && <DateRangeCalendar value={profitRange} onChange={setProfitRange} close={() => setShowProfitCalendar(false)} scope="profit" />}

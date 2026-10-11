@@ -83,3 +83,22 @@ export function variantStockTransition(products: Product[], previous: Order | un
   }
   return result
 }
+
+export function validateOrderVariantStock(products: Product[], items: OrderItem[], previous?: Order, nextStatus: Order['status'] = 'New') {
+  const groups = new Map<string, { product: Product; variantId: string; quantity: number }>()
+  for (const item of items) {
+    const product = products.find(p => p.id === item.productId)
+    if (!product?.variants?.length || !item.variantId) continue
+    const key = product.id + ':' + item.variantId
+    const group = groups.get(key) || { product, variantId: item.variantId, quantity: 0 }
+    group.quantity += item.quantity; groups.set(key, group)
+  }
+  for (const { product, variantId, quantity } of groups.values()) {
+    const variant = product.variants!.find(v => v.id === variantId)
+    if (!variant) throw new Error('This variant is no longer available for ' + product.name + '.')
+    const previousQuantity = previous?.items.filter(item => item.productId === product.id && item.variantId === variantId).reduce((sum, item) => sum + item.quantity, 0) || 0
+    if (previous && nextStatus !== 'Delivered' && quantity <= previousQuantity) continue
+    const available = variant.stock + (previous?.status === 'Delivered' ? previousQuantity : 0)
+    if (quantity > available) throw new Error(product.name + ' · ' + variant.label + ': ' + (available ? 'Only ' + available + ' left. Reduce the quantity or choose another variant.' : 'Out of stock. Choose another variant.'))
+  }
+}
