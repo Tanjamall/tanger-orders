@@ -1,3 +1,4 @@
+import { OrderItemsEditor } from './OrderItemsEditor'
 import { orderItemName } from '../../domain/variants'
 import { whatsappNumber } from '../../domain/orders'
 import {
@@ -34,12 +35,7 @@ type OrderFormProps = {
 
 export function OrderForm({ order, products, members, confirmationEmployees, defaultDeliveryCharge = 0, onSubmit, submitLabel = 'Save order' }: OrderFormProps) {
   const [submitting, setSubmitting] = useState(false)
-  const [productId, setProductId] = useState(order?.items[0]?.productId || products[0]?.id || '')
-  const [variantId, setVariantId] = useState(order?.items[0]?.variantId || '')
   const [error, setError] = useState('')
-  const product = products.find(entry => entry.id === productId)
-  const legacy = order?.items[0]?.productId === productId && !order.items[0].variantId
-  const available = (id: string, stock: number) => stock + (order?.status === 'Delivered' && order.items[0]?.productId === productId && order.items[0]?.variantId === id ? order.items[0].quantity : 0)
   const assignees = members.length
     ? members.map((member) => ({ value: member.id, label: member.display_name || 'Team member' }))
     : people.map((person) => ({ value: person, label: person }))
@@ -49,10 +45,7 @@ export function OrderForm({ order, products, members, confirmationEmployees, def
     <label className="form-field"><span>WhatsApp number</span><input required name="phone" defaultValue={order?.phone} /></label>
     <label className="form-field"><span>Address <small>Arabic or English</small></span><input required name="address" defaultValue={order?.address} /></label>
     <label className="form-field"><span>Google Maps link <small>Optional</small></span><input name="locationUrl" type="url" defaultValue={order?.locationUrl} /></label>
-    <label className="form-field"><span>Product or bundle</span><select required name="product" value={productId} onChange={event => { setProductId(event.target.value); setVariantId('') }}>{products.map((product) => <option value={product.id} key={product.id}>{product.components ? 'Bundle: ' : ''}{product.name} — {money(product.price)}</option>)}</select></label>
-    {Boolean(product?.variants?.length) && <fieldset className="order-variant-options"><legend>{product?.variantName || 'Variant'}</legend><div>{legacy && <label><input type="radio" name="variantId" value="" checked={!variantId} onChange={() => setVariantId('')} /><span>Not recorded<small>Existing order</small></span></label>}{product!.variants!.map(v => <label key={v.id}><input type="radio" name="variantId" value={v.id} required={!legacy} checked={variantId === v.id} onChange={() => setVariantId(v.id)} /><span><bdi>{v.label}</bdi><small>{available(v.id,v.stock)} in stock</small></span></label>)}</div></fieldset>}
-    {product && <p className="order-stock-note">{variantId ? available(variantId,product.variants?.find(v => v.id === variantId)?.stock || 0) : product.stock} units available{product.variants?.length && !variantId ? ' across all variants' : ''}. Stock is deducted when delivered.</p>}
-    <div className="form-row"><label className="form-field"><span>Quantity</span><input required name="quantity" type="number" min="1" step="1" defaultValue={order?.items[0]?.quantity || 1} /></label><label className="form-field"><span>Custom price <small>Optional</small></span><input key={productId} name="price" type="number" min="0" step="0.01" placeholder={String(product?.price ?? 0)} defaultValue={order?.items[0]?.productId === productId ? order.items[0]?.unitPrice : undefined} /></label></div>
+    <OrderItemsEditor order={order} products={products} />
     <div className="form-row"><label className="form-field"><span>Delivery person</span><select name="assignedTo" defaultValue={order?.assignedTo}>{assignees.map((person) => <option value={person.value} key={person.value}>{person.label}</option>)}</select></label><label className="form-field"><span>Delivery expense</span><input name="deliveryCharge" type="number" min="0" step="0.01" defaultValue={order?.deliveryCharge ?? defaultDeliveryCharge} /></label></div>
     <div className="form-row"><label className="form-field"><span>Order status</span><select name="status" defaultValue={order?.status || 'New'}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label className="form-field"><span>Payment status</span><select name="paymentStatus" defaultValue={order?.paymentStatus || 'Pay on delivery'}>{paymentStatuses.map((status) => <option key={status}>{status}</option>)}</select></label></div>
     <label className="form-field"><span>Confirmed by</span><select name="confirmationEmployeeId" defaultValue={order?.confirmationEmployeeId || ''}><option value="">Admin (no bonus)</option>{confirmationEmployees.filter((employee) => employee.active || employee.id === order?.confirmationEmployeeId).map((employee) => <option value={employee.id} key={employee.id}>{employee.name} · {money(employee.bonus)} per {employee.bonusBasis === 'per_item' ? 'item' : 'order'}</option>)}</select></label>

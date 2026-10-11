@@ -41,6 +41,28 @@ export function formOrderItem(product: Product, values: FormData, previous?: Ord
   } : {}) }
 }
 
+export type OrderItemDraft = { productId: string; variantId: string; quantity: string; price: string; previousIndex?: number }
+
+export function formOrderItems(products: Product[], values: FormData, previousItems: OrderItem[] = []): OrderItem[] {
+  const lines = JSON.parse(String(values.get('orderItems') || '[]')) as OrderItemDraft[]
+  if (!Array.isArray(lines) || !lines.length || lines.length > 100) throw new Error('Add between 1 and 100 items to this order.')
+  const seen = new Set<number>()
+  return lines.map((line, index) => {
+    const previousIndex = line.previousIndex
+    if (previousIndex !== undefined && (!Number.isInteger(previousIndex) || previousIndex < 0 || previousIndex >= previousItems.length || seen.has(previousIndex))) throw new Error('An order item changed unexpectedly. Close and reopen this form.')
+    if (previousIndex !== undefined) seen.add(previousIndex)
+    const previous = previousIndex === undefined ? undefined : previousItems[previousIndex]
+    const product = products.find(p => p.id === line.productId)
+    if (!product) {
+      if (previous?.productId === line.productId && (previous.variantId || '') === line.variantId && previous.quantity === Number(line.quantity) && previous.unitPrice === Number(line.price)) return { ...previous }
+      throw new Error('Choose an available product for item ' + (index + 1) + '.')
+    }
+    const itemValues = new FormData()
+    itemValues.set('quantity', line.quantity); itemValues.set('variantId', line.variantId); itemValues.set('price', line.price)
+    try { return formOrderItem(product, itemValues, previous) } catch (cause) { throw new Error('Item ' + (index + 1) + ': ' + (cause as Error).message) }
+  })
+}
+
 export function variantStockTransition(products: Product[], previous: Order | undefined, next: Order) {
   const result = products.map(product => ({ ...product, variants: product.variants?.map(variant => ({ ...variant })) }))
   for (const [order, direction] of [[previous, 1], [next, -1]] as const) {

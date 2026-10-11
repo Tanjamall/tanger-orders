@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import ts from 'typescript'
 const source = await readFile(new URL('../src/domain/variants.ts', import.meta.url),'utf8')
 const compiled = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText
-const { validateVariants, formOrderItem, orderItemName, variantStockTransition } = await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'))
+const { validateVariants, formOrderItem, formOrderItems, orderItemName, variantStockTransition } = await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'))
 const product = { id:'p1',name:'Lamp',cost:40,price:100,stock:5,lowStockAt:1,variantName:'Color',variants:[{id:'red',label:'Red',stock:2},{id:'black',label:'Black',stock:3}] }
 const order = { id:'o1', status:'New',items:[{productId:'p1',quantity:2,unitPrice:100,variantId:'red',variantLabel:'Red',variantName:'Color'}] }
 function values(data){const result=new FormData(); for(const [key,value] of Object.entries(data))result.set(key,String(value));return result}
@@ -47,4 +47,32 @@ test('older delivered orders reopen into explicit unspecified stock and cannot b
  assert.equal(reopened[0].variants.find(v=>v.id==='legacy').stock,1)
  assert.equal(reopened[0].stock,6)
  assert.throws(()=>variantStockTransition(reopened,undefined,legacy),/choose a variant/)
+})
+
+test('one order accepts mixed colors with independent quantities and prices',()=>{
+ const items=formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'red',quantity:'1',price:''},{productId:'p1',variantId:'black',quantity:'2',price:'90'}])}))
+ assert.equal(items.length,2)
+ assert.equal(items[0].variantLabel,'Red');assert.equal(items[0].unitPrice,100)
+ assert.equal(items[1].variantLabel,'Black');assert.equal(items[1].quantity,2);assert.equal(items[1].unitPrice,90)
+ const delivered={...order,status:'Delivered',items}
+ const result=variantStockTransition([product],undefined,delivered)[0]
+ assert.equal(result.stock,2);assert.equal(result.variants[0].stock,1);assert.equal(result.variants[1].stock,1)
+ const removed={...delivered,items:[items[1]]}
+ const edited=variantStockTransition([result],delivered,removed)[0]
+ assert.equal(edited.stock,3);assert.equal(edited.variants[0].stock,2);assert.equal(edited.variants[1].stock,1)
+})
+test('multiple lines cannot oversell a color even when each individual line fits',()=>{
+ const items=formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'red',quantity:'2',price:''},{productId:'p1',variantId:'red',quantity:'1',price:''}])}))
+ assert.throws(()=>variantStockTransition([product],undefined,{...order,status:'Delivered',items}),/Not enough/)
+ assert.equal(product.stock,5)
+})
+test('editing preserves every line and its history after another line is removed',()=>{
+ const previous=[order.items[0],{...order.items[0],variantId:'black',variantLabel:'Original black',quantity:1}]
+ const items=formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'black',quantity:'1',price:'100',previousIndex:1}])}),previous)
+ assert.equal(items[0].variantLabel,'Original black')
+ const archived={productId:'gone',quantity:1,unitPrice:75,costTotal:30}
+ assert.deepEqual(formOrderItems([],values({orderItems:JSON.stringify([{productId:'gone',variantId:'',quantity:'1',price:'75',previousIndex:0}])}),[archived]),[archived])
+ assert.throws(()=>formOrderItems([product],values({orderItems:'[]'})),/Add between/)
+ assert.throws(()=>formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'',quantity:'1',price:''}])})),/Item 1.*Choose/)
+ assert.throws(()=>formOrderItems([product],values({orderItems:JSON.stringify([{productId:'p1',variantId:'red',quantity:'1',price:'',previousIndex:9}])}),previous),/unexpectedly/)
 })

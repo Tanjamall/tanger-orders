@@ -1,0 +1,15 @@
+.order-items-editor { padding-block:14px; border-block:1px solid var(--line); }
+.order-items-editor > header { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; margin-bottom:14px; }
+.order-items-editor > header b { color:var(--ink); font:700 14px 'Manrope',sans-serif; }
+.order-items-editor > header span { color:var(--muted); font-size:12px; }
+.order-item-line { position:relative; min-width:0; padding:0 0 16px; margin:0 0 16px; border:0; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:12px; }
+.order-item-line > legend { color:var(--pine); font:700 12px 'Manrope',sans-serif; padding:0; margin-bottom:10px; min-height:24px; }
+.order-item-remove { position:absolute; top:-36px; right:0; min-width:44px; min-height:44px; display:grid; place-items:center; border:0; background:transparent; color:var(--muted); border-radius:8px; }
+.order-item-remove svg { width:18px; height:18px; }
+.order-item-remove:hover { color:var(--coral); background:var(--paper-soft); }
+.order-add-item { display:flex; justify-content:center; align-items:center; gap:8px; width:100%; min-height:44px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--paper-raised); color:var(--pine); font:700 13px 'Manrope',sans-serif; }
+.order-add-item:hover { background:var(--mint); border-color:var(--pine-soft); }
+.order-add-item:disabled { opacity:.5; cursor:not-allowed; }
+.order-add-item svg { width:18px; height:18px; }
+.order-items-total { display:flex; justify-content:space-between; gap:16px; padding-block:14px 10px; color:var(--ink); font-size:13px; }
+.order-items-total strong { color:var(--pine); font-size:16px; font-variant-numeric:tabular-nums; }

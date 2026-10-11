@@ -1,5 +1,5 @@
 import { ProductForm } from './features/inventory/ProductForm'
-import { formOrderItem, orderItemName, variantsFromForm, variantStockTransition } from './domain/variants'
+import { formOrderItems, orderItemName, variantsFromForm, variantStockTransition } from './domain/variants'
 import { normalizePhone } from './domain/orders'
 import { DailyDeliveryModal } from './features/orders/DailyDeliveryModal'
 import { readAllPages } from './domain/pagination'
@@ -718,19 +718,18 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
 
   async function addOrder(form: HTMLFormElement) {
     const values = new FormData(form)
-    const product = products.find((item) => item.id === values.get('product'))
-    if (!product) return
     const status = values.get('status') as Status || 'New'
     const createdAt = new Date().toISOString()
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
-    const items = [formOrderItem(product, values)]
+    const items = formOrderItems(products, values)
     const order: Order = {
       id: uid(), client: String(values.get('client') || ''), phone: normalizePhone(String(values.get('phone') || '')), address: String(values.get('address') || ''),
       items, status, paymentStatus: values.get('paymentStatus') as PaymentStatus || 'Pay on delivery',
       assignedTo: String(values.get('assignedTo')), deliveryCharge: Number(values.get('deliveryCharge')) || 0, otherExpense: Number(values.get('otherExpense')) || 0, createdAt, deliveredAt: status === 'Delivered' ? createdAt : undefined, confirmationEmployeeId, confirmationBonus: isConfirmedOrder(status) ? confirmationBonusFor(confirmationEmployee, items) : 0, confirmedAt: isConfirmedOrder(status) ? createdAt : undefined, locationUrl: String(values.get('locationUrl') || ''), notes: String(values.get('notes') || ''),
     }
-    if (devDemo || !supabase) setProducts(variantStockTransition(products, undefined, order))
+    const nextProducts = variantStockTransition(products, undefined, order)
+    if (devDemo || !supabase) setProducts(nextProducts)
     setOrders((all) => [order, ...all])
     setShowOrder(false)
     if (!devDemo && supabase && workspaceId) {
@@ -771,15 +770,17 @@ function OrderApp({ session, devDemo }: { session: Session | null; devDemo: bool
   async function updateOrder(form: HTMLFormElement) {
     if (!editingOrder) return
     const values = new FormData(form)
-    const product = products.find((item) => item.id === values.get('product'))
     const status = values.get('status') as Status
     const becameDelivered = editingOrder.status !== 'Delivered' && status === 'Delivered'
     const confirmationEmployeeId = String(values.get('confirmationEmployeeId') || '') || undefined
     const confirmationEmployee = confirmationEmployees.find((employee) => employee.id === confirmationEmployeeId)
     const isSameConfirmer = confirmationEmployeeId === editingOrder.confirmationEmployeeId
     const confirmedAt = editingOrder.confirmedAt || (isConfirmedOrder(status) ? new Date().toISOString() : undefined)
-    const updatedItems = product ? [formOrderItem(product, values, editingOrder.items[0])] : editingOrder.items
-    const itemsUnchanged = JSON.stringify(updatedItems) === JSON.stringify(editingOrder.items)
+    const updatedItems = formOrderItems(products, values, editingOrder.items)
+    const itemsUnchanged = updatedItems.length === editingOrder.items.length && updatedItems.every((item, index) => {
+      const previous = editingOrder.items[index]
+      return item.productId === previous.productId && item.variantId === previous.variantId && item.quantity === previous.quantity && item.unitPrice === previous.unitPrice
+    })
     const confirmationBonus = confirmationEmployeeId && isConfirmedOrder(status)
       ? isSameConfirmer && itemsUnchanged && editingOrder.confirmedAt
         ? editingOrder.confirmationBonus ?? confirmationBonusFor(confirmationEmployee, updatedItems)
