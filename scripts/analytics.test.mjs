@@ -243,3 +243,14 @@ test('archiving products preserves historical analytics and product identities',
  assert.deepEqual(buildAnalytics(orders,archived,employees,range),buildAnalytics(orders,products,employees,range))
  assert.deepEqual(buildBusinessAnalytics(orders,archived,[],employees,range),buildBusinessAnalytics(orders,products,[],employees,range))
 })
+
+test('saved price rewards reduce profit and remain unchanged after product price changes',()=>{
+ const range={start:'2026-09-01',end:'2026-09-30'}
+ const before=buildAnalytics(orders,products,employees,range)
+ const rewarded=orders.map(order=>order.id==='o1'?{...order,confirmationBonus:15}:order)
+ const result=buildAnalytics(rewarded,products,employees,range)
+ assert.equal(result.totals.profit,before.totals.profit-10)
+ assert.equal(result.totals.confirmationCost,before.totals.confirmationCost+10)
+ const changed=buildAnalytics(rewarded,products.map(product=>({...product,price:1000})),employees,range)
+ assert.equal(changed.totals.profit,result.totals.profit)
+})

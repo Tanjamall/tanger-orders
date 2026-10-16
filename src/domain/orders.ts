@@ -22,9 +22,15 @@ export const paymentStatuses: PaymentStatus[] = ['Pay on delivery', 'Paid', 'Unp
 
 export const preciseMoney = (value: number) => `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })} DH`
 export const money = (value: number) => `${Math.round(value)} DH`
-export const confirmationBonusFor = (employee: ConfirmationEmployee | undefined, items: Order['items']) => employee
-  ? employee.bonus * (employee.bonusBasis === 'per_item' ? items.reduce((sum, item) => sum + item.quantity, 0) : 1)
-  : 0
+export const confirmationBonusFor = (employee: ConfirmationEmployee | undefined, items: Order['items'], products: Product[] = []) => {
+  if (!employee) return 0
+  const fixed = employee.bonus * (employee.bonusBasis === 'per_item' ? items.reduce((sum, item) => sum + item.quantity, 0) : 1)
+  const extra = items.reduce((sum, item) => {
+    const product = products.find(product => product.id === item.productId)
+    return sum + (product ? Math.max(0, item.unitPrice - product.price) * item.quantity : 0)
+  }, 0)
+  return Math.round((fixed + extra + Number.EPSILON) * 100) / 100
+}
 export const uid = () => crypto.randomUUID()
 export const isConfirmedOrder = (status: Status) => ['Confirmed', 'Out for delivery', 'Delivered'].includes(status)
 export const normalizeStatus = (status: string): Status => status === 'Preparing' ? 'Confirmed' : status === 'Cancelled' ? 'Canceled' : status as Status
